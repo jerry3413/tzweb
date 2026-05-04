@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>APP 评论体征后台</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <!--
+      页面定位：
+      - 这是“APP 体征分析后台”的第一版，只先解决评论下载和本地沉淀。
+      - 左侧导航保留后续模块，让产品结构从第一版就稳定下来。
+    -->
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">评</div>
+          <div>
+            <div class="brand-name">APP 体征后台</div>
+            <div class="brand-subtitle">评论数据采集</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="主导航">
+          <a class="nav-item active" href="/">
+            <span class="nav-dot"></span>
+            评论下载
+          </a>
+          <span class="nav-item disabled">评论查看</span>
+          <span class="nav-item disabled">体征分析</span>
+          <span class="nav-item disabled">竞品对比</span>
+          <span class="nav-item disabled">预警规则</span>
+        </nav>
+
+        <div class="side-note">
+          <span>当前版本</span>
+          <strong>只下载，不解析</strong>
+          <p>下载结果会保存到本地，后续分析模块直接复用这些原始文件。</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div id="runtimeNotice" class="runtime-notice" hidden>
+          当前是静态文件预览，不能连接本地下载服务。请在终端运行 npm run dev 后，打开控制台输出的 http://localhost:端口 地址。
+        </div>
+
+        <section class="workspace">
+          <!--
+            第一版主流程：一个商店链接创建一个下载任务。
+            解析、聚类、情绪分析都不混在这里，避免第一版复杂化。
+          -->
+          <form id="downloadForm" class="download-panel">
+            <div class="panel-ruler">
+              <span>输入链接</span>
+              <span>调用导出</span>
+              <span>保存本地</span>
+            </div>
+            <div class="section-title">
+              <div>
+                <h2>新建下载任务</h2>
+              </div>
+            </div>
+
+            <label class="field full">
+              <span>商店链接</span>
+              <input id="appUrl" name="url" type="url" placeholder="粘贴 App Store 或 Google Play 链接" required>
+            </label>
+
+            <div class="form-grid">
+              <label class="field">
+                <span>评论数量</span>
+                <select id="count" name="count">
+                  <option value="500">500 条（推荐）</option>
+                  <option value="1000" selected>1,000 条</option>
+                  <option value="2000">2,000 条</option>
+                  <option value="5000">5,000 条</option>
+                  <option value="10000">10,000 条（最大）</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>国家/地区</span>
+                <select id="country" name="country">
+                  <option value="us" selected>🇺🇸 美国</option>
+                  <optgroup label="热门市场">
+                    <option value="gb">🇬🇧 英国</option>
+                    <option value="ca">🇨🇦 加拿大</option>
+                    <option value="au">🇦🇺 澳大利亚</option>
+                    <option value="de">🇩🇪 德国</option>
+                    <option value="fr">🇫🇷 法国</option>
+                    <option value="jp">🇯🇵 日本</option>
+                    <option value="kr">🇰🇷 韩国</option>
+                    <option value="in">🇮🇳 印度</option>
+                    <option value="br">🇧🇷 巴西</option>
+                    <option value="mx">🇲🇽 墨西哥</option>
+                    <option value="es">🇪🇸 西班牙</option>
+                    <option value="it">🇮🇹 意大利</option>
+                    <option value="nl">🇳🇱 荷兰</option>
+                    <option value="hk">🇭🇰 香港</option>
+                    <option value="sg">🇸🇬 新加坡</option>
+                  </optgroup>
+                  <optgroup label="美洲">
+                    <option value="ar">🇦🇷 阿根廷</option>
+                    <option value="cl">🇨🇱 智利</option>
+                    <option value="co">🇨🇴 哥伦比亚</option>
+                    <option value="pe">🇵🇪 秘鲁</option>
+                    <option value="uy">🇺🇾 乌拉圭</option>
+                    <option value="ve">🇻🇪 委内瑞拉</option>
+                  </optgroup>
+                  <optgroup label="欧洲">
+                    <option value="be">🇧🇪 比利时</option>
+                    <option value="ch">🇨🇭 瑞士</option>
+                    <option value="at">🇦🇹 奥地利</option>
+                    <option value="dk">🇩🇰 丹麦</option>
+                    <option value="fi">🇫🇮 芬兰</option>
+                    <option value="no">🇳🇴 挪威</option>
+                    <option value="se">🇸🇪 瑞典</option>
+                    <option value="pl">🇵🇱 波兰</option>
+                    <option value="cz">🇨🇿 捷克</option>
+                    <option value="sk">🇸🇰 斯洛伐克</option>
+                    <option value="hu">🇭🇺 匈牙利</option>
+                    <option value="ro">🇷🇴 罗马尼亚</option>
+                    <option value="bg">🇧🇬 保加利亚</option>
+                    <option value="hr">🇭🇷 克罗地亚</option>
+                    <option value="si">🇸🇮 斯洛文尼亚</option>
+                    <option value="ee">🇪🇪 爱沙尼亚</option>
+                    <option value="lv">🇱🇻 拉脱维亚</option>
+                    <option value="lt">🇱🇹 立陶宛</option>
+                    <option value="gr">🇬🇷 希腊</option>
+                    <option value="pt">🇵🇹 葡萄牙</option>
+                    <option value="ie">🇮🇪 爱尔兰</option>
+                    <option value="lu">🇱🇺 卢森堡</option>
+                    <option value="mt">🇲🇹 马耳他</option>
+                    <option value="cy">🇨🇾 塞浦路斯</option>
+                    <option value="is">🇮🇸 冰岛</option>
+                  </optgroup>
+                  <optgroup label="亚太">
+                    <option value="cn">🇨🇳 中国</option>
+                    <option value="tw">🇹🇼 台湾</option>
+                    <option value="my">🇲🇾 马来西亚</option>
+                    <option value="th">🇹🇭 泰国</option>
+                    <option value="id">🇮🇩 印度尼西亚</option>
+                    <option value="ph">🇵🇭 菲律宾</option>
+                    <option value="vn">🇻🇳 越南</option>
+                    <option value="nz">🇳🇿 新西兰</option>
+                    <option value="pk">🇵🇰 巴基斯坦</option>
+                    <option value="bd">🇧🇩 孟加拉国</option>
+                    <option value="lk">🇱🇰 斯里兰卡</option>
+                    <option value="np">🇳🇵 尼泊尔</option>
+                    <option value="mm">🇲🇲 缅甸</option>
+                    <option value="la">🇱🇦 老挝</option>
+                    <option value="kh">🇰🇭 柬埔寨</option>
+                    <option value="mn">🇲🇳 蒙古</option>
+                    <option value="kz">🇰🇿 哈萨克斯坦</option>
+                  </optgroup>
+                  <optgroup label="中东和非洲">
+                    <option value="tr">🇹🇷 土耳其</option>
+                    <option value="il">🇮🇱 以色列</option>
+                    <option value="ae">🇦🇪 阿联酋</option>
+                    <option value="sa">🇸🇦 沙特阿拉伯</option>
+                    <option value="kw">🇰🇼 科威特</option>
+                    <option value="qa">🇶🇦 卡塔尔</option>
+                    <option value="bh">🇧🇭 巴林</option>
+                    <option value="om">🇴🇲 阿曼</option>
+                    <option value="jo">🇯🇴 约旦</option>
+                    <option value="lb">🇱🇧 黎巴嫩</option>
+                    <option value="eg">🇪🇬 埃及</option>
+                    <option value="ma">🇲🇦 摩洛哥</option>
+                    <option value="za">🇿🇦 南非</option>
+                    <option value="ng">🇳🇬 尼日利亚</option>
+                    <option value="ke">🇰🇪 肯尼亚</option>
+                    <option value="gh">🇬🇭 加纳</option>
+                  </optgroup>
+                  <optgroup label="俄罗斯及独联体">
+                    <option value="ru">🇷🇺 俄罗斯</option>
+                    <option value="by">🇧🇾 白俄罗斯</option>
+                    <option value="ua">🇺🇦 乌克兰</option>
+                    <option value="ge">🇬🇪 格鲁吉亚</option>
+                    <option value="am">🇦🇲 亚美尼亚</option>
+                    <option value="az">🇦🇿 阿塞拜疆</option>
+                  </optgroup>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>语言</span>
+                <select id="language" name="language">
+                  <option value="all">全部语言（Rivioo）</option>
+                  <option value="en" selected>英语</option>
+                  <option value="es">西班牙语</option>
+                  <option value="fr">法语</option>
+                  <option value="de">德语</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>文件格式</span>
+                <select id="format" name="format">
+                  <option value="csv">CSV</option>
+                  <option value="xlsx">XLSX</option>
+                  <option value="both">CSV + XLSX</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>排序方式</span>
+                <select id="sort" name="sort">
+                  <option value="newest">最新优先</option>
+                  <option value="oldest">最早优先</option>
+                  <option value="rating">高评分优先</option>
+                  <option value="helpful">有帮助优先</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>邮箱参数</span>
+                <input id="email" name="email" type="email" placeholder="不填则使用本地默认邮箱">
+              </label>
+            </div>
+
+            <button id="submitButton" class="primary-button" type="submit">开始下载评论</button>
+            <p class="fine-print">导出限制：App Store 单次最多 500 条，Google Play 单次最多 10,000 条。</p>
+
+            <div class="service-row">
+              <!-- 接口地址放在主表单底部，保留排障能力，但不再抢占页面顶部。 -->
+              <span class="api-label">接口状态</span>
+              <code id="apiBase">正在识别...</code>
+              <button id="refreshApi" class="secondary-button compact-button" type="button">重新识别</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="jobs-section">
+          <!-- 每条历史任务都对应一组本地原始文件，是后续评论查看和分析的入口。 -->
+          <div class="section-title">
+            <div>
+              <h2>本地下载记录</h2>
+              <p>已完成任务可以直接下载原始文件；失败任务会显示失败原因。</p>
+            </div>
+            <button id="reloadJobs" class="secondary-button" type="button">刷新记录</button>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>目标 APP</th>
+                  <th>任务状态</th>
+                  <th>评论数量</th>
+                  <th>下载参数</th>
+                  <th>本地文件</th>
+                  <th>更新时间</th>
+                </tr>
+              </thead>
+              <tbody id="jobsTable">
+                <tr>
+                  <td colspan="6" class="empty">还没有下载任务。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

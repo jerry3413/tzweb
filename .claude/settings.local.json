@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check server.mjs)",
+      "Bash(node --check public/app.js)",
+      "Bash(node --dns-result-order=ipv4first server.mjs)",
+      "Bash(curl -s http://localhost:3000/api/jobs)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://localhost:3001/api/jobs)",
+      "Bash(python3 -c ' *)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -m playwright install chromium)",
+      "Bash(python3 /tmp/test_reveal.py)",
+      "Bash(ps -p 57532 -o pid,command)",
+      "Bash(curl -s http://localhost:3000/api/config)",
+      "Bash(curl -s -X POST \"http://localhost:3000/api/reveal/test\")",
+      "Bash(kill 57532)"
+    ]
+  }
+}

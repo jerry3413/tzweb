@@ -1,0 +1,14 @@
+{
+  "name": "tzweb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --dns-result-order=ipv4first server.mjs",
+    "start": "node --dns-result-order=ipv4first server.mjs",
+    "reviews:download": "node --dns-result-order=ipv4first scripts/rivioo-download.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

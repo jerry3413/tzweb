@@ -1,0 +1,595 @@
+:root {
+  /* frontend-design 方向：数据战情室 + 中文编辑部报表感。
+     目标不是“好看的表单”，而是让下载后台像一个可持续扩展的运营指挥台。 */
+  color-scheme: light;
+  --ink: #0b1220;
+  --ink-2: #172033;
+  --paper: #f7f5ef;
+  --paper-2: #fffdf7;
+  --blue: #1d4ed8;
+  --blue-2: #0f2f6f;
+  --green: #0f9f6e;
+  --yellow: #f4c430;
+  --red: #d92d20;
+  --line: #c7c0b2;
+  --line-dark: #293548;
+  --muted: #6b665d;
+  --muted-blue: #8ea0bd;
+  --shadow: 0 22px 60px rgba(11, 18, 32, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--ink);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    linear-gradient(135deg, rgba(29, 78, 216, 0.08) 0 25%, transparent 25% 100%),
+    repeating-linear-gradient(0deg, rgba(11, 18, 32, 0.035) 0 1px, transparent 1px 18px),
+    var(--paper);
+  color: var(--ink);
+  font-family: "Hiragino Sans GB", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.45;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-shell {
+  /* 左侧保持“控制台”感，右侧用报表式内容区承载高频操作。 */
+  display: grid;
+  grid-template-columns: 276px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: 24px 18px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, #101827 0%, #07101e 100%),
+    var(--ink);
+  color: #f8fafc;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sidebar::before {
+  /* 侧栏的细网格让界面有“数据底图”的记忆点。 */
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, black, transparent 82%);
+}
+
+.brand,
+.nav,
+.side-note {
+  position: relative;
+  z-index: 1;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 4px 30px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(244, 196, 48, 0.55);
+  border-radius: 8px;
+  background: var(--yellow);
+  color: var(--ink);
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 25px;
+  font-weight: 900;
+  box-shadow: 6px 6px 0 rgba(244, 196, 48, 0.18);
+}
+
+.brand-name {
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.brand-subtitle {
+  margin-top: 2px;
+  color: var(--muted-blue);
+  font-size: 13px;
+}
+
+.nav {
+  display: grid;
+  gap: 8px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.nav-item.active {
+  border-color: rgba(96, 165, 250, 0.5);
+  background: rgba(29, 78, 216, 0.22);
+  color: #ffffff;
+}
+
+.nav-item.disabled {
+  color: #6f7f96;
+}
+
+.nav-dot {
+  width: 8px;
+  height: 8px;
+  margin-right: 10px;
+  border-radius: 999px;
+  background: var(--green);
+  box-shadow: 0 0 0 5px rgba(15, 159, 110, 0.16);
+}
+
+.side-note {
+  /* 当前版本边界要一直可见，避免 PM 误以为已经包含解析能力。 */
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 22px;
+  padding: 14px;
+  border: 1px solid rgba(142, 160, 189, 0.25);
+  border-radius: 8px;
+  background: rgba(11, 18, 32, 0.72);
+}
+
+.side-note span {
+  color: var(--muted-blue);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.side-note strong {
+  display: block;
+  margin-top: 4px;
+  color: #ffffff;
+}
+
+.side-note p {
+  margin: 8px 0 0;
+  color: #c8d3e4;
+  font-size: 12px;
+}
+
+.main {
+  min-width: 0;
+  padding: 34px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  max-width: 760px;
+  margin-top: 6px;
+  font-family: "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+  font-size: clamp(32px, 4vw, 54px);
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: 19px;
+  letter-spacing: 0;
+}
+
+.section-title p,
+.fine-print {
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.service-row {
+  /* 接口状态降级成表单附属信息：保留排障入口，但不占主视觉。 */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #eef4ff;
+}
+
+.api-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.service-row code {
+  overflow: hidden;
+  color: var(--blue-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-notice {
+  /* 静态 file:// 预览无法调用本地 API，用醒目提示避免误判为系统故障。 */
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid #b45309;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #92400e;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.workspace {
+  /* 去掉顶部说明区后，下载表单成为页面主工作区。 */
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.download-panel,
+.jobs-section {
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  background: var(--paper-2);
+  box-shadow: var(--shadow);
+}
+
+.download-panel {
+  position: relative;
+  padding: 18px 20px 20px;
+}
+
+.panel-ruler {
+  /* 顶部流程尺让用户理解：表单输入会经过 Rivioo，最后变成本地文件。 */
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -18px -20px 18px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--ink);
+  border-radius: 8px 8px 0 0;
+  background: var(--ink);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.section-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.field.full {
+  margin-bottom: 14px;
+}
+
+.field span {
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  height: 43px;
+  border: 1px solid var(--line-dark);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fffefa;
+  color: var(--ink);
+}
+
+.field input::placeholder {
+  color: #9a9488;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: 3px solid rgba(29, 78, 216, 0.18);
+  border-color: var(--blue);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.primary-button,
+.secondary-button {
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.primary-button {
+  width: 100%;
+  height: 48px;
+  margin-top: 16px;
+  background: var(--blue);
+  color: #ffffff;
+  box-shadow: 5px 5px 0 rgba(11, 18, 32, 0.18);
+}
+
+.primary-button:hover {
+  background: var(--blue-2);
+}
+
+.primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.secondary-button {
+  height: 34px;
+  padding: 0 12px;
+  background: var(--yellow);
+  color: var(--ink);
+}
+
+.compact-button {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.secondary-button:hover {
+  filter: brightness(0.96);
+}
+
+.fine-print {
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #fff9e8;
+  font-size: 13px;
+}
+
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid var(--line-dark);
+  border-radius: 999px;
+  padding: 0 11px;
+  background: #f3f4f6;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.status-pill.running,
+.status-pill.queued {
+  border-color: var(--blue);
+  background: #eaf2ff;
+  color: var(--blue-2);
+}
+
+.status-pill.completed {
+  border-color: var(--green);
+  background: #e7fff3;
+  color: #056444;
+}
+
+.status-pill.failed {
+  border-color: var(--red);
+  background: #fff0ef;
+  color: var(--red);
+}
+
+.jobs-section {
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  min-width: 1010px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 13px 10px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 14px;
+}
+
+th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+tbody tr:hover td {
+  background: #fffaf0;
+}
+
+.empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 32px;
+}
+
+.app-cell {
+  display: flex;
+  align-items: center;
+  min-width: 250px;
+  gap: 10px;
+}
+
+.app-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-dark);
+  border-radius: 8px;
+  background: #e5e7eb;
+  object-fit: cover;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.progress-track {
+  width: 156px;
+  height: 8px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #eee7d8;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--blue);
+}
+
+.file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--blue);
+  border-radius: 999px;
+  background: #eaf2ff;
+  color: var(--blue-2);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.file-link:hover {
+  background: #dbeafe;
+}
+
+.file-link:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.view-link {
+  border-color: var(--green);
+  background: #e7fff3;
+  color: #056444;
+}
+
+.view-link:hover {
+  background: #d6ffeb;
+}
+
+.warning {
+  margin-top: 4px;
+  color: var(--red);
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+  }
+
+  .side-note {
+    position: static;
+    margin-top: 22px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .main {
+    padding: 18px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .service-row {
+    grid-template-columns: 1fr;
+  }
+
+  .command-strip > div {
+    border-right: 0;
+  }
+
+  h1 {
+    font-size: 31px;
+  }
+}
