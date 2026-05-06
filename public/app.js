@@ -43,6 +43,14 @@ function bindEvents() {
   els.reloadJobs.addEventListener('click', loadJobs);
   els.refreshApi.addEventListener('click', refreshApiBase);
   els.jobsTable.addEventListener('click', async (event) => {
+    // 删除按钮
+    const deleteBtn = event.target.closest('[data-job-id]');
+    if (deleteBtn) {
+      event.preventDefault();
+      await deleteJob(deleteBtn.dataset.jobId);
+      return;
+    }
+    // 查看原文件按钮
     const revealButton = event.target.closest('[data-reveal-url]');
     if (!revealButton) return;
 
@@ -112,6 +120,17 @@ async function revealLocalFile(button) {
   }
 }
 
+async function deleteJob(jobId) {
+  if (!window.confirm('确定要删除此下载任务及其关联文件吗？此操作不可撤销。')) return;
+  try {
+    await fetchJson(`/api/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
+    state.jobs = state.jobs.filter((j) => j.id !== jobId);
+    renderJobs();
+  } catch (error) {
+    window.alert(`删除失败：${error.message}`);
+  }
+}
+
 // 提交只负责启动任务，不等待完整 CSV/XLSX 导出结束。
 // 评论下载可能耗时较长，不适合让浏览器请求一直挂着。
 async function submitDownload() {
@@ -172,7 +191,7 @@ function startPolling() {
 // MVP 任务量小，全量重画比逐行更新更简单，也更不容易出错。
 function renderJobs() {
   if (state.jobs.length === 0) {
-    els.jobsTable.innerHTML = '<tr><td colspan="6" class="empty">还没有下载任务。</td></tr>';
+    els.jobsTable.innerHTML = '<tr><td colspan="7" class="empty">还没有下载任务。</td></tr>';
     return;
   }
 
@@ -184,6 +203,7 @@ function renderJobs() {
       <td>${inputCell(job)}</td>
       <td>${filesCell(job)}</td>
       <td>${dateCell(job.updatedAt || job.createdAt)}</td>
+      <td><br><a class="action-link delete-link" data-job-id="${escapeAttr(job.id)}">删除</a></td>
     </tr>
   `).join('');
 }
@@ -283,18 +303,6 @@ function upsertJob(jobs, job) {
   return [job, ...rest];
 }
 
-// 简单的 API 请求工具：后端接口无论成功失败都返回 JSON。
-async function fetchJson(url, options) {
-  const response = await fetch(url, options);
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || `Request failed with HTTP ${response.status}`);
-  }
-
-  return data;
-}
-
 // 后端状态值保持英文，便于程序判断；页面展示时统一转成中文。
 function statusText(status) {
   const map = {
@@ -342,31 +350,4 @@ function sortText(sort) {
     helpful: '有帮助优先'
   };
   return map[sort] || sort;
-}
-
-function formatBytes(bytes) {
-  if (!bytes) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let value = bytes;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index += 1;
-  }
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-}
-
-// App 名称和评论元数据来自商店与 Rivioo，属于外部内容。
-// 渲染前先转义，避免这些字符串被浏览器当成 HTML 执行。
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function escapeAttr(value) {
-  return escapeHtml(value).replaceAll('`', '&#96;');
 }
