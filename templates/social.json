@@ -1,0 +1,110 @@
+{
+  "id": "builtin-social",
+  "name": "社交评论分析模板",
+  "category": "社交",
+  "description": "适用于即时通讯、社交网络类APP的评论分类分析，覆盖通讯体验、隐私安全、内容消费、通知管理等维度。",
+  "isBuiltIn": true,
+  "createdAt": "2026-05-04T00:00:00.000Z",
+  "updatedAt": "2026-05-04T00:00:00.000Z",
+  "dimensions": [
+    {
+      "id": "dim-social-motive",
+      "name": "使用动机",
+      "productMeaning": "用户下载的核心任务",
+      "tags": [
+        { "id": "tag-social-motive-chat", "name": "与朋友聊天" },
+        { "id": "tag-social-motive-family", "name": "与家人联系" },
+        { "id": "tag-social-motive-work", "name": "工作沟通" },
+        { "id": "tag-social-motive-group", "name": "群组交流" },
+        { "id": "tag-social-motive-share", "name": "分享生活动态" }
+      ]
+    },
+    {
+      "id": "dim-social-messaging",
+      "name": "消息体验",
+      "productMeaning": "核心通讯功能的可靠性",
+      "tags": [
+        { "id": "tag-social-msg-sendfail", "name": "消息发送失败" },
+        { "id": "tag-social-msg-delay", "name": "消息延迟" },
+        { "id": "tag-social-msg-notify", "name": "消息通知不提醒" },
+        { "id": "tag-social-msg-media", "name": "图片/视频发送失败" },
+        { "id": "tag-social-msg-sync", "name": "多设备消息不同步" },
+        { "id": "tag-social-msg-search", "name": "消息搜索好用" },
+        { "id": "tag-social-msg-backup", "name": "聊天记录备份" }
+      ]
+    },
+    {
+      "id": "dim-social-privacy",
+      "name": "隐私与安全",
+      "productMeaning": "用户对个人数据的信任感",
+      "tags": [
+        { "id": "tag-social-privacy-encrypt", "name": "端到端加密" },
+        { "id": "tag-social-privacy-data", "name": "担心数据收集" },
+        { "id": "tag-social-privacy-block", "name": "拉黑/屏蔽功能" },
+        { "id": "tag-social-privacy-online", "name": "在线状态可见" },
+        { "id": "tag-social-privacy-read", "name": "已读回执" },
+        { "id": "tag-social-privacy-account", "name": "账号被封/被盗" }
+      ]
+    },
+    {
+      "id": "dim-social-content",
+      "name": "内容消费",
+      "productMeaning": "信息流和内容生态体验",
+      "tags": [
+        { "id": "tag-social-content-feed", "name": "动态/信息流质量" },
+        { "id": "tag-social-content-algorithm", "name": "推荐算法" },
+        { "id": "tag-social-content-ads", "name": "信息流广告" },
+        { "id": "tag-social-content-creator", "name": "创作发布功能" },
+        { "id": "tag-social-content-video", "name": "视频播放体验" }
+      ]
+    },
+    {
+      "id": "dim-social-call",
+      "name": "音视频通话",
+      "productMeaning": "实时通讯质量",
+      "tags": [
+        { "id": "tag-social-call-quality", "name": "通话质量好" },
+        { "id": "tag-social-call-drop", "name": "通话断线" },
+        { "id": "tag-social-call-video", "name": "视频通话清晰" },
+        { "id": "tag-social-call-group", "name": "群组通话" },
+        { "id": "tag-social-call-battery", "name": "通话耗电" }
+      ]
+    },
+    {
+      "id": "dim-social-notification",
+      "name": "通知管理",
+      "productMeaning": "用户对信息打扰的控制感",
+      "tags": [
+        { "id": "tag-social-notif-too-many", "name": "通知太多" },
+        { "id": "tag-social-notif-mute", "name": "静音/免打扰好用" },
+        { "id": "tag-social-notif-miss", "name": "收不到通知" },
+        { "id": "tag-social-notif-custom", "name": "自定义通知" },
+        { "id": "tag-social-notif-spam", "name": "垃圾通知" }
+      ]
+    },
+    {
+      "id": "dim-social-stability",
+      "name": "技术稳定性",
+      "productMeaning": "基础体验底线",
+      "tags": [
+        { "id": "tag-social-stability-crash", "name": "闪退" },
+        { "id": "tag-social-stability-freeze", "name": "卡死" },
+        { "id": "tag-social-stability-loadslow", "name": "启动慢" },
+        { "id": "tag-social-stability-battery", "name": "后台耗电" },
+        { "id": "tag-social-stability-storage", "name": "占用存储空间大" },
+        { "id": "tag-social-stability-update", "name": "更新后出问题" }
+      ]
+    },
+    {
+      "id": "dim-social-pay",
+      "name": "付费体验",
+      "productMeaning": "商业化与用户付费意愿",
+      "tags": [
+        { "id": "tag-social-pay-sub", "name": "订阅价格合理" },
+        { "id": "tag-social-pay-features", "name": "付费功能不值" },
+        { "id": "tag-social-pay-ads", "name": "去广告付费" },
+        { "id": "tag-social-pay-business", "name": "商业账号功能" }
+      ]
+    }
+  ]
+}
