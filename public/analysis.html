@@ -27,7 +27,10 @@
             <span class="nav-dot"></span>
             评论解析
           </a>
-          <span class="nav-item disabled">竞品对比</span>
+          <a class="nav-item" href="/compare.html">
+            <span class="nav-dot"></span>
+            竞品对比
+          </a>
           <span class="nav-item disabled">预警规则</span>
         </nav>
 
@@ -165,6 +168,14 @@
                   <input id="parallelTasksInput" type="number" value="20" min="1" max="50" step="1">
                 </label>
               </div>
+              <div class="form-grid" style="margin-bottom: 10px;">
+                <label class="field">
+                  <span>Prompt 版本</span>
+                  <select id="promptVersionSelect">
+                    <option value="">加载中...</option>
+                  </select>
+                </label>
+              </div>
               <label class="field full">
                 <span>System Prompt <span class="fine-print" style="display: inline; padding: 0; border: none; background: none; font-weight: 400;">（根据所选模板自动生成，可编辑）</span></span>
                 <textarea id="systemPromptInput" rows="10" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;"></textarea>
@@ -218,7 +229,9 @@
               <h2 id="resultsTitle">解析结果</h2>
               <p id="resultsSummary"></p>
             </div>
+            <button id="exportResultsBtn" class="secondary-button" type="button">导出 CSV</button>
             <button id="backToJobsBtn" class="secondary-button" type="button">返回任务列表</button>
+            <button id="promptOptimizeBtn" class="secondary-button" type="button" hidden style="background: var(--accent); color: #fff; border-color: var(--accent);">优化 Prompt</button>
           </div>
 
           <!-- Tab 导航 -->
@@ -230,6 +243,17 @@
 
           <!-- Tab: 汇总 -->
           <div class="results-tab-panel" id="tab-summary">
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px;">
+              <span style="font-weight: 900; font-size: 13px;">向性：</span>
+              <select id="filterPolaritySummary" style="height: 34px; border: 1px solid var(--line-dark); border-radius: 8px; padding: 0 10px;">
+                <option value="">全部</option>
+                <option value="正向">正向</option>
+                <option value="负向">负向</option>
+                <option value="中性">中性</option>
+                <option value="需求">需求</option>
+              </select>
+              <button id="polaritySortBtn" class="secondary-button compact-button" type="button" style="margin-left: auto;">向性排序</button>
+            </div>
             <div id="dimensionStats" class="dimension-stats"></div>
           </div>
 
@@ -251,6 +275,20 @@
                 <option value="medium">中（0.6 — 0.8）</option>
                 <option value="low">低（< 0.6）</option>
               </select>
+              <span style="font-weight: 900; font-size: 13px;">向性：</span>
+              <select id="filterPolarity" style="height: 34px; border: 1px solid var(--line-dark); border-radius: 8px; padding: 0 10px;">
+                <option value="">全部</option>
+                <option value="正向">正向</option>
+                <option value="负向">负向</option>
+                <option value="中性">中性</option>
+                <option value="需求">需求</option>
+              </select>
+              <span style="font-weight: 900; font-size: 13px;">备注：</span>
+              <select id="filterHasNote" style="height: 34px; border: 1px solid var(--line-dark); border-radius: 8px; padding: 0 10px;">
+                <option value="">全部</option>
+                <option value="yes">有备注</option>
+              </select>
+              <button id="editToggleBtn" class="secondary-button compact-button edit-toggle" type="button" style="margin-left: auto;">编辑标签</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -291,6 +329,28 @@
             </div>
           </div>
         </section>
+
+        <!-- 向性排序弹窗 -->
+        <div class="modal-overlay" id="polaritySortModal" hidden>
+          <div class="modal-container" style="max-width: 720px;">
+            <div class="modal-header">
+              <h3>向性排序 — 标签按频次由大到小</h3>
+              <button class="modal-close" id="polaritySortClose" type="button">✕</button>
+            </div>
+            <div class="modal-body" id="polaritySortContent"></div>
+          </div>
+        </div>
+
+        <!-- Prompt 优化建议弹窗 -->
+        <div class="modal-overlay" id="promptOptimizeModal" hidden>
+          <div class="modal-container" style="max-width: 720px;">
+            <div class="modal-header">
+              <h3>Prompt 优化建议</h3>
+              <button class="modal-close" id="promptOptimizeClose" type="button">✕</button>
+            </div>
+            <div class="modal-body" id="promptOptimizeContent"></div>
+          </div>
+        </div>
       </main>
     </div>
 

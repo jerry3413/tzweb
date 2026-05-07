@@ -8,8 +8,33 @@ const state = {
   analyses: [],            // 分析任务列表
   currentResults: null,    // 当前查看的分析结果
   polling: null,
-  _selectedJobIds: ''      // 自定义下拉当前选中的 jobIds JSON 字符串
+  _selectedJobIds: '',     // 自定义下拉当前选中的 jobIds JSON 字符串
+  editMode: false,         // 已分类评论是否处于编辑模式
+  editHistory: [],         // 手动修正记录 [{ reviewId, reviewText, originalClasses, newClasses, changeType }]
+  _addingTagForReviewId: null,  // 正在添加标签的 reviewId
+  _currentDimensionsDesc: ''     // 当前选中模板的维度描述文本，供版本切换时复用
 };
+
+const RECENT_TAGS_KEY = 'tzweb_recent_tags';
+const RECENT_TAGS_MAX = 15;
+
+function getRecentTags() {
+  try { return JSON.parse(localStorage.getItem(RECENT_TAGS_KEY)) || []; } catch { return []; }
+}
+
+function saveRecentTags(tags) {
+  try { localStorage.setItem(RECENT_TAGS_KEY, JSON.stringify(tags)); } catch {}
+}
+
+function addRecentTag(dimensionId, dimensionName, tagName, polarity) {
+  const tags = getRecentTags();
+  // 去重：同维度+同标签名视为重复，移除旧条目
+  const idx = tags.findIndex((t) => t.dimensionId === dimensionId && t.tagName === tagName);
+  if (idx >= 0) tags.splice(idx, 1);
+  tags.unshift({ dimensionId, dimensionName, tagName, polarity, usedAt: new Date().toISOString() });
+  if (tags.length > RECENT_TAGS_MAX) tags.length = RECENT_TAGS_MAX;
+  saveRecentTags(tags);
+}
 
 const els = {
   runtimeNotice: document.querySelector('#runtimeNotice'),
@@ -42,6 +67,7 @@ const els = {
   parallelTasksInput: document.querySelector('#parallelTasksInput'),
   systemPromptInput: document.querySelector('#systemPromptInput'),
   userPromptInput: document.querySelector('#userPromptInput'),
+  promptVersionSelect: document.querySelector('#promptVersionSelect'),
   startAnalysisBtn: document.querySelector('#startAnalysisBtn'),
   // 分析任务列表
   analysisTable: document.querySelector('#analysisTable'),
@@ -51,15 +77,29 @@ const els = {
   resultsTitle: document.querySelector('#resultsTitle'),
   resultsSummary: document.querySelector('#resultsSummary'),
   dimensionStats: document.querySelector('#dimensionStats'),
+  filterPolaritySummary: document.querySelector('#filterPolaritySummary'),
+  polaritySortBtn: document.querySelector('#polaritySortBtn'),
+  polaritySortModal: document.querySelector('#polaritySortModal'),
+  polaritySortContent: document.querySelector('#polaritySortContent'),
+  polaritySortClose: document.querySelector('#polaritySortClose'),
   filterDimension: document.querySelector('#filterDimension'),
   filterTag: document.querySelector('#filterTag'),
   filterConfidence: document.querySelector('#filterConfidence'),
+  filterPolarity: document.querySelector('#filterPolarity'),
+  filterHasNote: document.querySelector('#filterHasNote'),
   classifiedTable: document.querySelector('#classifiedTable'),
   lowConfidenceTable: document.querySelector('#lowConfidenceTable'),
   lowConfidenceSummary: document.querySelector('#lowConfidenceSummary'),
   lowConfBadge: document.querySelector('#lowConfBadge'),
   resultsTabs: document.querySelector('#resultsTabs'),
-  backToJobsBtn: document.querySelector('#backToJobsBtn')
+  backToJobsBtn: document.querySelector('#backToJobsBtn'),
+  exportResultsBtn: document.querySelector('#exportResultsBtn'),
+  // 编辑模式 + Prompt 优化
+  editToggleBtn: document.querySelector('#editToggleBtn'),
+  promptOptimizeBtn: document.querySelector('#promptOptimizeBtn'),
+  promptOptimizeModal: document.querySelector('#promptOptimizeModal'),
+  promptOptimizeClose: document.querySelector('#promptOptimizeClose'),
+  promptOptimizeContent: document.querySelector('#promptOptimizeContent')
 };
 
 init();
@@ -71,7 +111,8 @@ async function init() {
   try {
     await Promise.all([
       loadTemplates(),
-      loadDownloadJobs()
+      loadDownloadJobs(),
+      loadPromptVersions()
     ]);
     await loadAnalyses();
     startPolling();
@@ -81,6 +122,12 @@ async function init() {
 }
 
 function bindEvents() {
+  // 恢复上次使用的 API Key
+  try {
+    const savedKey = localStorage.getItem('tzweb_api_key');
+    if (savedKey) els.apiKeyInput.value = savedKey;
+  } catch {}
+
   els.newTemplateBtn.addEventListener('click', () => openTemplateEditor(null));
   els.closeTemplateEditor.addEventListener('click', closeTemplateEditorFn);
   els.saveTemplateBtn.addEventListener('click', saveTemplate);
@@ -90,14 +137,39 @@ function bindEvents() {
   els.startAnalysisBtn.addEventListener('click', submitAnalysis);
   els.toggleAdvancedBtn.addEventListener('click', toggleAdvancedSettings);
   els.analysisTemplateSelect.addEventListener('change', updateDefaultPrompts);
+  els.promptVersionSelect.addEventListener('change', () => applyPromptVersion(els.promptVersionSelect.value));
   els.reloadAnalyses.addEventListener('click', loadAnalyses);
   els.backToJobsBtn.addEventListener('click', hideResults);
+  els.exportResultsBtn.addEventListener('click', exportResultsCSV);
+  els.editToggleBtn.addEventListener('click', toggleEditMode);
+  els.promptOptimizeBtn.addEventListener('click', openPromptOptimization);
+  els.promptOptimizeClose.addEventListener('click', closePromptOptimization);
   els.filterDimension.addEventListener('change', () => {
 	    populateFilterTag(els.filterDimension.value);
 	    renderFilteredReviews();
 	  });
 	  els.filterTag.addEventListener('change', renderFilteredReviews);
 	  els.filterConfidence.addEventListener('change', renderFilteredReviews);
+  els.filterPolarity.addEventListener('change', renderFilteredReviews);
+  els.filterHasNote.addEventListener('change', renderFilteredReviews);
+  els.filterPolaritySummary.addEventListener('change', renderDimensionStats);
+  els.polaritySortBtn.addEventListener('click', showPolaritySortModal);
+  els.polaritySortClose.addEventListener('click', () => { els.polaritySortModal.hidden = true; });
+  els.polaritySortModal.addEventListener('click', (e) => { if (e.target === els.polaritySortModal) els.polaritySortModal.hidden = true; });
+  els.polaritySortContent.addEventListener('click', (e) => {
+    const badge = e.target.closest('.tag-badge[data-dim-id]');
+    if (!badge) return;
+    const dimId = badge.dataset.dimId;
+    const tagId = badge.dataset.tagId;
+    els.filterDimension.value = dimId;
+    populateFilterTag(dimId);
+    els.filterTag.value = tagId ? `${dimId}::${tagId}` : '';
+    els.filterConfidence.value = '';
+    els.filterPolarity.value = '';
+    els.filterHasNote.value = '';
+    switchResultsTab('classified');
+    renderFilteredReviews();
+  });
 
   // 结果 Tab 切换
   els.resultsTabs.addEventListener('click', (event) => {
@@ -117,6 +189,9 @@ function bindEvents() {
       populateFilterTag(dimId);
       els.filterTag.value = tagId ? `${dimId}::${tagId}` : '';
       els.filterConfidence.value = '';
+      els.filterPolarity.value = '';
+      els.filterHasNote.value = '';
+      els.filterPolaritySummary.value = '';
       switchResultsTab('classified');
       renderFilteredReviews();
       return;
@@ -129,6 +204,9 @@ function bindEvents() {
       populateFilterTag(dimId);
       els.filterTag.value = '';
       els.filterConfidence.value = '';
+      els.filterPolarity.value = '';
+      els.filterHasNote.value = '';
+      els.filterPolaritySummary.value = '';
       switchResultsTab('classified');
       renderFilteredReviews();
     }
@@ -327,6 +405,14 @@ function renderDimensionsEditor() {
         ${(dim.tags || []).map((tag, tagIndex) => `
           <div class="tag-row">
             <input class="tag-name-input" value="${escapeAttr(tag.name || '')}" placeholder="标签名称" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" data-field="tagName">
+            <select class="tag-polarity-select" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" data-field="tagPolarity">
+              <option value="">-- 方向 --</option>
+              <option value="正向" ${tag.polarity === '正向' ? 'selected' : ''}>正向</option>
+              <option value="负向" ${tag.polarity === '负向' ? 'selected' : ''}>负向</option>
+              <option value="中性" ${tag.polarity === '中性' ? 'selected' : ''}>中性</option>
+              <option value="需求" ${tag.polarity === '需求' ? 'selected' : ''}>需求</option>
+            </select>
+            <input class="tag-meaning-input" value="${escapeAttr(tag.productMeaning || '')}" placeholder="产品含义（可选）" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" data-field="tagMeaning">
             <button class="secondary-button compact-button remove-tag-btn" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" type="button">×</button>
           </div>
         `).join('')}
@@ -365,24 +451,36 @@ function bindEditorEvents() {
       const dimIndex = parseInt(addTagBtn.dataset.dimIndex, 10);
       const dim = state.currentTemplate.dimensions[dimIndex];
       if (!dim.tags) dim.tags = [];
-      dim.tags.push({ id: '', name: '' });
+      dim.tags.push({ id: '', name: '', polarity: '', productMeaning: '' });
       renderDimensionsEditor();
     }
   });
 
-  // 输入框变更时同步回 state.currentTemplate
+  // 输入框/下拉框变更时同步回 state.currentTemplate
   els.dimensionsEditor.addEventListener('input', (event) => {
     if (!state.currentTemplate) return;
     const input = event.target;
     const dimIndex = parseInt(input.dataset.dimIndex, 10);
+    const tagIndex = input.dataset.tagIndex ? parseInt(input.dataset.tagIndex, 10) : -1;
 
     if (input.classList.contains('dim-name-input')) {
       state.currentTemplate.dimensions[dimIndex].name = input.value;
     } else if (input.classList.contains('dim-meaning-input')) {
       state.currentTemplate.dimensions[dimIndex].productMeaning = input.value;
     } else if (input.classList.contains('tag-name-input')) {
-      const tagIndex = parseInt(input.dataset.tagIndex, 10);
       state.currentTemplate.dimensions[dimIndex].tags[tagIndex].name = input.value;
+    } else if (input.classList.contains('tag-meaning-input')) {
+      state.currentTemplate.dimensions[dimIndex].tags[tagIndex].productMeaning = input.value;
+    }
+  });
+
+  els.dimensionsEditor.addEventListener('change', (event) => {
+    if (!state.currentTemplate) return;
+    const select = event.target;
+    if (select.classList.contains('tag-polarity-select')) {
+      const dimIndex = parseInt(select.dataset.dimIndex, 10);
+      const tagIndex = parseInt(select.dataset.tagIndex, 10);
+      state.currentTemplate.dimensions[dimIndex].tags[tagIndex].polarity = select.value;
     }
   });
 }
@@ -585,6 +683,45 @@ function toggleAdvancedSettings() {
   }
 }
 
+// 加载可用的 prompt 版本列表，填充下拉框。
+async function loadPromptVersions() {
+  try {
+    const data = await fetchJson('/api/prompts/versions');
+    const versions = data.versions || [];
+    els.promptVersionSelect.innerHTML = versions.map((v) =>
+      `<option value="${escapeAttr(v.version)}">v${escapeHtml(v.version)}${v.current ? '（最新）' : ''} — ${escapeHtml(v.description)}</option>`
+    ).join('');
+    // 默认选中最新版本
+    const current = versions.find((v) => v.current);
+    if (current) els.promptVersionSelect.value = current.version;
+  } catch {
+    els.promptVersionSelect.innerHTML = '<option value="">无法加载版本列表</option>';
+  }
+}
+
+// 将指定版本的 prompt 模板填入 textarea。
+// dimensionsDesc 从 state._currentDimensionsDesc 读取。
+async function applyPromptVersion(version) {
+  const dimsDesc = state._currentDimensionsDesc;
+  if (!dimsDesc) return;
+
+  // 尝试从服务端获取指定版本的 prompt 模板
+  let promptTemplate = null;
+  if (version) {
+    try {
+      const data = await fetchJson(`/api/prompts/versions/${encodeURIComponent(version)}`);
+      promptTemplate = data.version?.promptTemplate;
+    } catch (err) {
+      console.error('加载 Prompt 版本失败：', err);
+    }
+  }
+
+  if (promptTemplate) {
+    els.systemPromptInput.value = promptTemplate.replace('${dimensionsDesc}', dimsDesc);
+  }
+  // 没有版本文件或版本不存在时，保持 textarea 原始内容不变
+}
+
 // 根据所选模板生成默认 System Prompt 和 User Prompt 模板，供用户预览和编辑。
 async function updateDefaultPrompts() {
   const templateId = els.analysisTemplateSelect.value;
@@ -599,13 +736,24 @@ async function updateDefaultPrompts() {
   }
   if (!tpl) return;
 
-  // System Prompt：与 deepseek-client.mjs buildSystemPrompt 逻辑一致
+  // System Prompt：根据模板维度与标签生成，标签含产品含义帮助 AI 精确分类。
+  // 过滤掉无意义的标签：id 为空或 name 为空的标签不传给 DeepSeek
   const dims = tpl.dimensions || [];
   const dimensionsDesc = dims.map((dim) => {
-    const tagsDesc = (dim.tags || []).map((tag) => `"${tag.name}"`).join('、');
-    return `- ${dim.name}（${dim.productMeaning || ''}）：${tagsDesc}`;
-  }).join('\n');
+    const validTags = (dim.tags || []).filter((tag) => tag.id && tag.name);
+    if (validTags.length === 0) return '';
+    const tagsDesc = validTags.map((tag) => {
+      const polarity = tag.polarity ? `[${tag.polarity}] ` : '';
+      const meaning = tag.productMeaning ? ` — ${tag.productMeaning}` : '';
+      return `  ${polarity}"${tag.name}"${meaning}`;
+    }).join('\n');
+    return `- ${dim.name}（${dim.productMeaning || ''}）：\n${tagsDesc}`;
+  }).filter(Boolean).join('\n');
 
+  // 缓存维度描述，供版本切换时复用
+  state._currentDimensionsDesc = dimensionsDesc;
+
+  // 先用硬编码最新版本作为 fallback，再尝试加载用户选择的版本
   els.systemPromptInput.value = `你是一个专业的 APP 用户评论分析助手。请根据以下模板维度与标签，对每条评论进行语义理解和分类。
 
 ## 分类规则
@@ -615,22 +763,42 @@ async function updateDefaultPrompts() {
    - 0.7-0.9：评论高度暗示该含义
    - 0.5-0.7：评论可能涉及该含义，但不够明确
    - 低于 0.5：不要输出，视为不匹配
-3. **无意义内容优先判断**：对于无实质内容的评论，应优先归类到"无意义内容"维度并给 0.95 置信度，不要强行匹配其他维度。具体包括：
-	   - 纯情绪表达而无具体功能/体验描述（如 "very good", "good app", "nice", "great", "awesome", "bad", "very bad", "terrible", "worst app" 等仅有简单评价词）
-	   - 乱码、纯表情、无意义字符
-	   - 明显刷评/灌水
-	   - 与 APP 完全无关的内容
-4. 如果评论内容与任何维度/标签都不相关，返回空的 classifications 数组。
+3. **无意义内容跳过**：对于无实质内容的评论（纯情绪表达如 "very good"/"good"/"bad"、乱码、纯表情、刷评灌水、与APP无关内容等），不要强行匹配任何维度/标签，直接返回空的 classifications 数组。
+4. 如果评论内容与任何维度/标签都不相关，也返回空的 classifications 数组。
 5. **重要**：只输出 JSON 数组，不要输出其他文字、解释或 markdown 代码块标记。
+6. **note 补充信息**：仅当评论包含标签名未能覆盖的具体细节时才填写 note。note 是评论原文信息的提炼，不是标签名的复述或换说法。
+   **必须填 note**（评论有标签名之外的具体信息）：
+   - 正向标签：用户具体喜欢什么？（如评论"converts 50 pages in 3 seconds" + 标签"转换速度快" → note: "50页3秒转完"）
+   - 负向标签：用户具体抱怨什么？（如评论"full screen ad every time I click convert" + 标签"广告多" → note: "每次点转换都弹全屏广告"）
+   - 需求标签：用户具体建议什么功能？（如评论"need an option to choose output quality" + 标签"增加压缩选项" → note: "希望可选输出图片质量"）
+   - 中性标签：用户的具体场景或动机是什么？（如评论"using this to scan my ID for exam submission" + 标签"办公/学习场景" → note: "扫描证件提交考试"）
+   **禁止填 note**（评论内容已被标签名完全覆盖，无额外信息）：
+   - 评论"too many ads" + 标签"广告多" → note 留空（没说广告在哪、何时弹）
+   - 评论"very good app" + 标签"满意/好评" → note 留空（没说好在哪）
+   - 评论"crashes every time" + 标签"闪退/崩溃" → note 留空（没说触发场景）
+   - 评论"waste of money" + 标签"付费不满" → note 留空（没说哪里不值）
+   - 评论只是换一种说法复述标签名 → note 留空
+   **判断标准**：如果 note 和标签名表达的是同一件事，就留空。只有评论说出了标签名覆盖不了的具体细节时才填。
+
+7. **维度区分指南**：当一条评论可能同时命中"功能完整性"和"功能质量"两个维度时，按以下标准区分：
+   - 功能完整性：关注"功能是否存在、链路是否通畅"（有没有这个能力、能不能走完流程）
+   - 功能质量：关注"功能执行完成后的结果好坏"（输出清不清晰、排版对不对、比例是否正常）
+   例如："cannot convert images to PDF" → 功能完整性（能力缺失，任务无法执行）
+   "converted but PDF is blurry" → 功能质量（任务完成了但结果不满意）
+   "app crashes when I try to save" → 技术稳定性（崩溃），不是功能完整性也不是功能质量
+   "I can't find the file after saving" → UI/交互（找不到保存位置），不是功能质量
+8. **"其他"标签使用规则**：名称为"其他XXX"的标签是兜底选项，仅当评论明确不属于该维度下任何具体标签时才使用。命中"其他"标签时必须：
+   - note 必填，简要说明评论的具体内容
+   - 在 note 末尾附加 [新标签候选: XXX]，建议一个可新增的具体标签名
+   例如：评论"the OCR feature misreads Chinese characters"命中"其他功能质量反馈" → note: "OCR识别中文字符出错 [新标签候选: OCR识别错误]"
 
 ## 模板维度与标签
 
 ${dimensionsDesc}
-- 无意义内容（评论是否为无意义、垃圾、灌水、乱码等无效内容）："无意义"
 
 ## 输出格式
-请严格按以下 JSON 数组格式输出（每行一条完整的 JSON）：
-[{"reviewIndex": 0, "classifications": [{"dimension": "维度名称", "tag": "标签名称", "confidence": 0.85}]}, {"reviewIndex": 1, "classifications": []}]`;
+请严格按以下 JSON 数组格式输出：
+[{"reviewIndex": 0, "classifications": [{"dimension": "维度名称", "tag": "标签名称", "confidence": 0.85, "note": "具体内容（可选）"}]}, {"reviewIndex": 1, "classifications": []}]`;
 
   // User Prompt 模板：占位符会在服务端替换为实际评论数据
   els.userPromptInput.value = `以下是需要分类的 __BATCH_SIZE__ 条评论（每条包含 index、starRating 和 text）：
@@ -638,6 +806,12 @@ ${dimensionsDesc}
 __REVIEWS_JSON__
 
 请输出分类结果 JSON 数组：`;
+
+  // 如果用户选择了非最新版本，用对应版本的 prompt 模板覆盖 System Prompt
+  const selectedVersion = els.promptVersionSelect.value;
+  if (selectedVersion) {
+    await applyPromptVersion(selectedVersion);
+  }
 }
 
 // ===== 分析任务创建 =====
@@ -660,6 +834,8 @@ async function submitAnalysis() {
     window.alert('请输入 DeepSeek API Key。');
     return;
   }
+  // 记住上次使用的 API Key
+  try { localStorage.setItem('tzweb_api_key', apiKey); } catch {}
 
   const originalText = els.startAnalysisBtn.textContent;
   els.startAnalysisBtn.disabled = true;
@@ -676,7 +852,8 @@ async function submitAnalysis() {
       temperature: !isNaN(parseFloat(els.temperatureInput.value)) ? parseFloat(els.temperatureInput.value) : undefined,
       maxTokens: parseInt(els.maxTokensInput.value, 10) || 8192,
       systemPrompt: els.systemPromptInput.value.trim() || undefined,
-      userPromptTemplate: els.userPromptInput.value.trim() || undefined
+      userPromptTemplate: els.userPromptInput.value.trim() || undefined,
+      promptVersion: els.promptVersionSelect.value || undefined
     };
 
     const data = await fetchJson('/api/analysis', {
@@ -792,7 +969,8 @@ function analysisReviewCell(a) {
 
 function analysisConfigText(a) {
   const config = a.config || {};
-  return `${config.parallelTasks || 20} 并行 · 阈值 ${config.confidenceThreshold || 0.6}`;
+  const pv = config.promptVersion ? ` · Prompt v${escapeHtml(config.promptVersion)}` : '';
+  return `${config.parallelTasks || 20} 并行 · 阈值 ${config.confidenceThreshold || 0.6}${pv}`;
 }
 
 // ===== 结果查看 =====
@@ -801,6 +979,13 @@ async function viewResults(analysisId) {
   try {
     const data = await fetchJson(`/api/analysis/${encodeURIComponent(analysisId)}/results`);
     state.currentResults = data;
+    mergeCustomTagsIntoLocalTemplate();
+    state.editMode = false;
+    state.editHistory = [];
+    state._addingTagForReviewId = null;
+    els.editToggleBtn.classList.remove('edit-toggle--active');
+    els.editToggleBtn.textContent = '编辑标签';
+    if (els.promptOptimizeBtn) els.promptOptimizeBtn.hidden = true;
     els.resultsSection.hidden = false;
     els.resultsTitle.textContent = `解析结果 — ${escapeHtml(state.currentResults.template?.name || '')}`;
 
@@ -814,6 +999,9 @@ async function viewResults(analysisId) {
     els.filterDimension.value = '';
     els.filterTag.value = '';
     els.filterConfidence.value = '';
+    els.filterPolarity.value = '';
+    els.filterHasNote.value = '';
+    els.filterPolaritySummary.value = '';
     renderFilteredReviews();
     renderLowConfidence();
 
@@ -827,6 +1015,81 @@ async function viewResults(analysisId) {
 function hideResults() {
   els.resultsSection.hidden = true;
   state.currentResults = null;
+  state.editMode = false;
+  state.editHistory = [];
+  state._addingTagForReviewId = null;
+  els.editToggleBtn.classList.remove('edit-toggle--active');
+  els.editToggleBtn.textContent = '编辑标签';
+  if (els.promptOptimizeBtn) els.promptOptimizeBtn.hidden = true;
+}
+
+// 导出当前解析结果为 CSV 文件（每个分类一行，无分类的评论也导出一行）。
+function exportResultsCSV() {
+  const results = state.currentResults;
+  if (!results || !results.reviews) return;
+
+  const template = results.template;
+  const allDimensions = template?.dimensions || [];
+  const tagMetaMap = new Map();
+  for (const dim of allDimensions) {
+    for (const tag of (dim.tags || [])) {
+      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name, dimName: dim.name });
+    }
+  }
+
+  const getPolarity = (c) => c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+
+  const headers = ['评论内容', '评分', '评论者', '评论日期', '维度', '标签', '向性', '置信度', '备注', '用户建议', '人工标注', '低置信度'];
+
+  const rows = [];
+  for (const review of results.reviews) {
+    const suggestions = (review.suggestions || []).map((s) => `${s.category || ''}: ${s.description || ''}`).join('；');
+    const classifications = review.classifications || [];
+
+    if (classifications.length === 0) {
+      rows.push([review.reviewText || '', review.starRating || '', review.reviewerName || '', review.reviewDate || '', '', '', '', '', '', suggestions, '', review.isLowConfidence ? '是' : '']);
+    } else {
+      for (const c of classifications) {
+        rows.push([
+          review.reviewText || '',
+          review.starRating || '',
+          review.reviewerName || '',
+          review.reviewDate || '',
+          c.dimensionName || '',
+          c.tagName || '',
+          getPolarity(c),
+          typeof c.confidence === 'number' ? c.confidence.toFixed(2) : '',
+          c.note || '',
+          suggestions,
+          c.manuallyAssigned ? '是' : '',
+          review.isLowConfidence ? '是' : ''
+        ]);
+      }
+    }
+  }
+
+  const csvContent = [headers, ...rows]
+    .map((row) => row.map((cell) => {
+      const str = String(cell ?? '');
+      // CSV 转义：含逗号、引号或换行时用引号包裹，内部引号加倍
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    }).join(','))
+    .join('\n');
+
+  const bom = '﻿';
+  const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const appName = results.appName || results.template?.name || 'analysis';
+  a.download = `${appName}_解析结果_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function switchResultsTab(tabName) {
@@ -842,7 +1105,27 @@ function switchResultsTab(tabName) {
 
 // 维度标签统计：用 CSS 柱状条展示每个维度下的标签分布。
 function renderDimensionStats() {
-  const stats = state.currentResults?.dimensionStats || [];
+  const filterPolarity = els.filterPolaritySummary.value;
+  const template = state.currentResults?.template;
+  const allDimensions = template?.dimensions || [];
+
+  // 构建 tagId → { polarity, tagName } 的索引
+  const tagMetaMap = new Map();
+  for (const dim of allDimensions) {
+    for (const tag of (dim.tags || [])) {
+      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name });
+    }
+  }
+  const getPolarity = (c) => c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+
+  // 向性筛选时，从原始评论实时计算统计；否则使用预计算的 dimensionStats
+  let stats;
+  if (filterPolarity) {
+    stats = computePolarityFilteredStats(filterPolarity, getPolarity);
+  } else {
+    stats = state.currentResults?.dimensionStats || [];
+  }
+
   if (stats.length === 0) {
     els.dimensionStats.innerHTML = '';
     return;
@@ -852,9 +1135,11 @@ function renderDimensionStats() {
 
   els.dimensionStats.innerHTML = stats.map((dim) => {
     const percent = Math.round((dim.count / maxCount) * 100);
-    const tagItems = (dim.tags || []).sort((a, b) => b.count - a.count).slice(0, 8).map((tag) =>
-      `<span class="tag-badge" data-dim-id="${escapeAttr(dim.dimensionId)}" data-tag-id="${escapeAttr(tag.tagId || '')}" style="cursor: pointer;">${escapeHtml(tag.tagName)} (${tag.count})</span>`
-    ).join('');
+    const tagItems = (dim.tags || []).sort((a, b) => b.count - a.count).slice(0, 8).map((tag) => {
+      const pol = tagMetaMap.get(tag.tagId)?.polarity || '';
+      const polClass = pol === '正向' ? 'pol-positive' : pol === '负向' ? 'pol-negative' : pol === '需求' ? 'pol-demand' : 'pol-neutral';
+      return `<span class="tag-badge" data-dim-id="${escapeAttr(dim.dimensionId)}" data-tag-id="${escapeAttr(tag.tagId || '')}" style="cursor: pointer;"><span class="polarity-tag ${polClass}">${escapeHtml(pol)}</span>${escapeHtml(tag.tagName)} (${tag.count})</span>`;
+    }).join('');
 
     return `
       <div class="stats-row">
@@ -871,11 +1156,117 @@ function renderDimensionStats() {
   }).join('');
 }
 
+// 按向性筛选评论后，实时计算维度/标签统计。
+// 结构与服务端 calculateDimensionStats 一致，但仅统计匹配向性的分类。
+function computePolarityFilteredStats(polarity, getPolarity) {
+  const reviews = state.currentResults?.reviews || [];
+  const template = state.currentResults?.template;
+  const allDimensions = template?.dimensions || [];
+
+  // dimId → { dimensionId, dimensionName, count, tagCounts: Map<tagId, count> }
+  const dimMap = new Map();
+  for (const dim of allDimensions) {
+    dimMap.set(dim.id, { dimensionId: dim.id, dimensionName: dim.name, count: 0, tagCounts: new Map() });
+  }
+  // 无意义内容维度
+  dimMap.set('_meaningless', { dimensionId: '_meaningless', dimensionName: '无意义', count: 0, tagCounts: new Map() });
+
+  for (const review of reviews) {
+    if (review.isLowConfidence) continue;
+    for (const c of (review.classifications || [])) {
+      if (getPolarity(c) !== polarity) continue;
+      const dim = dimMap.get(c.dimensionId);
+      if (!dim) continue;
+      dim.count += 1;
+      const tagId = c.tagId || c.tagName;
+      dim.tagCounts.set(tagId, (dim.tagCounts.get(tagId) || 0) + 1);
+    }
+  }
+
+  return [...dimMap.values()]
+    .filter((dim) => dim.count > 0)
+    .map((dim) => ({
+      dimensionId: dim.dimensionId,
+      dimensionName: dim.dimensionName,
+      count: dim.count,
+      tags: [...dim.tagCounts.entries()].map(([tagId, count]) => {
+        // 从模板维度查找标签名；自定义标签直接用 tagId
+        const templateDim = allDimensions.find((d) => d.id === dim.dimensionId);
+        const templateTag = templateDim?.tags?.find((t) => t.id === tagId);
+        const tagName = templateTag?.name || tagId;
+        return { tagId, tagName, count };
+      }).filter((t) => t.count > 0).sort((a, b) => b.count - a.count)
+    }));
+}
+
+// 向性排序弹窗：将所有标签按正向/负向/需求/中性分组，组内按频次由大到小排序。
+// 点击标签可跳转查看对应评论，不关闭弹窗。
+function showPolaritySortModal() {
+  const reviews = state.currentResults?.reviews || [];
+  const template = state.currentResults?.template;
+  const allDimensions = template?.dimensions || [];
+
+  // 构建 tagId → { polarity, tagName, dimName, dimId } 索引
+  const tagMeta = new Map();
+  for (const dim of allDimensions) {
+    for (const tag of (dim.tags || [])) {
+      tagMeta.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name, dimName: dim.name, dimId: dim.id });
+    }
+  }
+
+  // polarity → Map<dimId::tagId, { dimId, tagId, dimName, tagName, count }>
+  const groupMaps = { '正向': new Map(), '负向': new Map(), '需求': new Map(), '中性': new Map() };
+
+  for (const review of reviews) {
+    if (review.isLowConfidence) continue;
+    for (const c of (review.classifications || [])) {
+      const meta = tagMeta.get(c.tagId);
+      if (!meta) continue;
+      const polarity = c.polarity || meta.polarity || '中性';
+      const gm = groupMaps[polarity] || (groupMaps[polarity] = new Map());
+      const key = `${meta.dimId}::${c.tagId}`;
+      const entry = gm.get(key);
+      if (entry) {
+        entry.count += 1;
+      } else {
+        gm.set(key, { dimId: meta.dimId, tagId: c.tagId, dimName: meta.dimName, tagName: meta.tagName, count: 1 });
+      }
+    }
+  }
+
+  const order = ['负向', '正向', '需求', '中性'];
+  let html = '';
+
+  for (const pol of order) {
+    const entries = [...(groupMaps[pol] || new Map()).values()].sort((a, b) => b.count - a.count);
+    if (entries.length === 0) continue;
+    const polClass = pol === '正向' ? 'pol-positive' : pol === '负向' ? 'pol-negative' : pol === '需求' ? 'pol-demand' : 'pol-neutral';
+    const total = entries.reduce((s, e) => s + e.count, 0);
+    html += `<div style="margin-bottom: 18px;">
+      <h4 style="margin-bottom: 8px;"><span class="polarity-tag ${polClass}" style="margin-right: 6px;">${pol}</span> 共 ${total} 条</h4>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">`;
+    for (const e of entries) {
+      html += `<span class="tag-badge" style="font-size: 13px; padding: 4px 10px; cursor: pointer;" data-dim-id="${escapeAttr(e.dimId)}" data-tag-id="${escapeAttr(e.tagId)}">${escapeHtml(e.dimName)} · ${escapeHtml(e.tagName)} <strong>${e.count}</strong></span>`;
+    }
+    html += `</div></div>`;
+  }
+
+  els.polaritySortContent.innerHTML = html || '<p>暂无数据。</p>';
+  els.polaritySortModal.hidden = false;
+}
+
 function populateFilterDimension() {
+  const template = state.currentResults?.template;
   const stats = state.currentResults?.dimensionStats || [];
+  const statMap = new Map(stats.map((s) => [s.dimensionId, s.count]));
+  const dims = (template?.dimensions || []).slice();
+  // 确保无意义维度在列表中（不在模板维度里，是系统内置维度）
+  dims.push({ id: '_meaningless', name: '无意义' });
   els.filterDimension.innerHTML = '<option value="">全部维度</option>' +
-    stats.map((dim) => `<option value="${escapeAttr(dim.dimensionId)}">${escapeHtml(dim.dimensionName)}（${dim.count}）</option>`).join('') +
-    '<option value="_meaningless">无意义</option>';
+    dims.map((dim) => {
+      const count = statMap.get(dim.id) || 0;
+      return `<option value="${escapeAttr(dim.id)}">${escapeHtml(dim.name)}（${count}）</option>`;
+    }).join('');
 }
 
 function populateFilterTag(dimensionId) {
@@ -905,16 +1296,44 @@ function populateFilterTag(dimensionId) {
     return true;
   }).sort((a, b) => b.count - a.count);
 
+  // 补充扫描 reviews 中的自定义标签，确保手动添加的标签也能出现在筛选项中
+  const reviews = state.currentResults?.reviews || [];
+  for (const r of reviews) {
+    for (const c of (r.classifications || [])) {
+      if (c.suggested) continue;
+      const key = `${c.dimensionId}::${c.tagId || c.tagName}`;
+      if (!seen.has(key) && c.tagName) {
+        seen.add(key);
+        unique.push({ tagId: c.tagId, tagName: c.tagName, count: 0, _dimId: c.dimensionId });
+      }
+    }
+  }
+
   els.filterTag.innerHTML = '<option value="">全部标签</option>' +
     unique.map((t) => `<option value="${escapeAttr(t._dimId + '::' + (t.tagId || t.tagName))}">${escapeHtml(t.tagName)}（${t.count}）</option>`).join('');
 }
 
-// 已分类评论表：支持按维度、标签和置信度筛选。
+// 已分类评论表：支持按维度、标签、置信度和向性筛选，支持编辑模式修改分类。
 function renderFilteredReviews() {
+  mergeCustomTagsIntoLocalTemplate();
   const reviews = state.currentResults?.reviews || [];
   const filterDim = els.filterDimension.value;
   const filterTag = els.filterTag.value;
   const filterConf = els.filterConfidence.value;
+  const filterPolarity = els.filterPolarity.value;
+
+  // 构建 tagId → { polarity, tagName } 的索引，用于向性筛选和显示
+  const template = state.currentResults?.template;
+  const allDimensions = template?.dimensions || [];
+  const tagMetaMap = new Map();
+  for (const dim of allDimensions) {
+    for (const tag of (dim.tags || [])) {
+      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name });
+    }
+  }
+
+  // 获取分类的实际向性（优先人工标注，其次模板定义）
+  const getPolarity = (c) => c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
 
   let filtered = reviews.filter((r) => !r.isLowConfidence && r.classifications && r.classifications.length > 0);
 
@@ -928,6 +1347,11 @@ function renderFilteredReviews() {
       r.classifications.some((c) => c.dimensionId === tagDimId && (c.tagId === tagId || c.tagName === tagId))
     );
   }
+  // 默认隐藏仅含"无意义"标签的评论，筛选无意义维度或标签时则展示
+  if (!filterTag && filterDim !== '_meaningless') {
+    filtered = filtered.filter((r) => !r.classifications.every((c) => c.tagId === '_meaningless'));
+  }
+
   if (filterConf === 'high') {
     filtered = filtered.filter((r) => r.classifications.some((c) => c.confidence >= 0.8));
   } else if (filterConf === 'medium') {
@@ -935,6 +1359,18 @@ function renderFilteredReviews() {
   } else if (filterConf === 'low') {
     filtered = filtered.filter((r) => r.classifications.every((c) => c.confidence < 0.6));
   }
+
+  if (filterPolarity) {
+    filtered = filtered.filter((r) => r.classifications.some((c) => getPolarity(c) === filterPolarity));
+  }
+
+  if (els.filterHasNote.value === 'yes') {
+    filtered = filtered.filter((r) => (r.classifications || []).some((c) => c.note && c.note.trim()));
+  }
+
+  // 更新编辑按钮文案和状态
+  els.editToggleBtn.textContent = state.editMode ? '退出编辑' : '编辑标签';
+  els.editToggleBtn.classList.toggle('edit-toggle--active', state.editMode);
 
   if (filtered.length === 0) {
     els.classifiedTable.innerHTML = '<tr><td colspan="5" class="empty">没有匹配的评论。</td></tr>';
@@ -949,10 +1385,16 @@ function renderFilteredReviews() {
     [filterTagDimId, filterTagId] = filterTagRaw.split('::');
   }
 
-  els.classifiedTable.innerHTML = filtered.map((r) => `
-    <tr>
+  const editMode = state.editMode;
+
+  els.classifiedTable.innerHTML = filtered.map((r) => {
+    const isAdding = state._addingTagForReviewId === r.reviewId;
+    const hasNotes = (r.classifications || []).some((c) => c.note && c.note.trim());
+
+    return `
+    <tr data-review-id="${escapeAttr(r.reviewId)}">
       <td style="max-width: 320px;">
-        <div style="max-height: 80px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(r.reviewText || '')}</div>
+        <div class="review-text-cell">${escapeHtml(r.reviewText || '')}</div>
         ${r.reviewerName ? `<div class="muted" style="margin-top: 4px;">— ${escapeHtml(r.reviewerName)}</div>` : ''}
       </td>
       <td>${'★'.repeat(Math.min(5, r.starRating || 0))}${r.starRating ? ` ${r.starRating}` : ''}</td>
@@ -960,9 +1402,62 @@ function renderFilteredReviews() {
         <div class="tag-badges">
           ${(r.classifications || []).map((c) => {
             const isMatch = filterTagRaw && c.dimensionId === filterTagDimId && (c.tagId === filterTagId || c.tagName === filterTagId);
-            return `<span class="tag-badge${isMatch ? ' tag-badge--match' : ''}">${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)}</span>`;
+            const polarity = c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+            const polClass = polarity === '正向' ? 'pol-positive' : polarity === '负向' ? 'pol-negative' : polarity === '需求' ? 'pol-demand' : 'pol-neutral';
+            return `<span class="tag-badge${isMatch ? ' tag-badge--match' : ''}" title="${escapeAttr(c.note || '')}">
+              <span class="polarity-tag ${polClass}">${escapeHtml(polarity)}</span>
+              ${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)}
+              ${editMode ? `<button class="badge-delete" type="button" data-dim-id="${escapeAttr(c.dimensionId)}" data-tag-id="${escapeAttr(c.tagId || c.tagName)}" title="删除此分类">&times;</button>` : ''}
+            </span>`;
           }).join('')}
         </div>
+        ${hasNotes ? `
+        <div class="tag-notes">
+          ${(r.classifications || []).filter((c) => c.note && c.note.trim()).map((c) => `<span class="tag-note">📝 ${escapeHtml(c.note.trim())}</span>`).join('')}
+        </div>` : ''}
+        ${editMode ? `
+        <div style="margin-top: 6px;">
+          ${isAdding ? `
+            <div class="inline-add-tag" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+              ${(() => {
+                const recent = getRecentTags();
+                if (recent.length === 0) return '';
+                return `<div style="display: flex; gap: 4px; flex-wrap: wrap; width: 100%; margin-bottom: 2px;">
+                  <span style="font-size: 11px; color: var(--ink-3); line-height: 24px;">最近：</span>
+                  ${recent.slice(0, 10).map((rt) => {
+                    const pClass = rt.polarity === '正向' ? 'pol-positive' : rt.polarity === '负向' ? 'pol-negative' : rt.polarity === '需求' ? 'pol-demand' : 'pol-neutral';
+                    return `<button class="recent-tag-chip" type="button"
+                      data-dim-id="${escapeAttr(rt.dimensionId)}"
+                      data-tag-name="${escapeAttr(rt.tagName)}"
+                      data-polarity="${escapeAttr(rt.polarity || '')}"
+                      data-review-id="${escapeAttr(r.reviewId)}"
+                      title="${escapeAttr(rt.dimensionName)} · ${escapeAttr(rt.tagName)}"
+                      style="font-size: 11px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); cursor: pointer; white-space: nowrap; line-height: 22px;"
+                    ><span class="polarity-tag ${pClass}" style="font-size: 9px; padding: 0 3px; margin-right: 2px;">${escapeHtml(rt.polarity)}</span>${escapeHtml(rt.tagName)}</button>`;
+                  }).join('')}
+                </div>`;
+              })()}
+              <select class="add-dim-select" data-review-id="${escapeAttr(r.reviewId)}" style="height: 28px; font-size: 12px;">
+                <option value="">选择维度</option>
+                ${allDimensions.map((dim) => `<option value="${escapeAttr(dim.id)}">${escapeHtml(dim.name)}</option>`).join('')}
+              </select>
+              <input class="add-tag-input" data-review-id="${escapeAttr(r.reviewId)}" list="tag-datalist-${escapeAttr(r.reviewId)}" placeholder="选择或输入标签" style="height: 28px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; background: var(--paper);">
+              <datalist id="tag-datalist-${escapeAttr(r.reviewId)}"></datalist>
+              <select class="add-polarity-select" data-review-id="${escapeAttr(r.reviewId)}" style="height: 28px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; background: var(--paper);">
+                <option value="">向性</option>
+                <option value="正向">正向</option>
+                <option value="负向">负向</option>
+                <option value="中性">中性</option>
+                <option value="需求">需求</option>
+              </select>
+              <input class="add-note-input" data-review-id="${escapeAttr(r.reviewId)}" placeholder="备注（可选）" style="height: 28px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; background: var(--paper); min-width: 140px;">
+              <button class="secondary-button compact-button confirm-add-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button" style="background: #1d4ed8; color: #fff; border-color: #1d4ed8;">确认</button>
+              <button class="secondary-button compact-button cancel-add-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button">取消</button>
+            </div>
+          ` : `
+            <button class="secondary-button compact-button show-add-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button">＋ 添加标签</button>
+          `}
+        </div>` : ''}
       </td>
       <td>
         ${(r.classifications || []).map((c) => `
@@ -973,7 +1468,367 @@ function renderFilteredReviews() {
       </td>
       <td class="muted">${r.reviewDate ? new Date(r.reviewDate).toLocaleDateString('zh-CN') : '-'}</td>
     </tr>
-  `).join('');
+  `}).join('');
+
+  // 编辑模式：绑定行内编辑事件
+  if (editMode) {
+    bindEditModeEvents(allDimensions);
+  }
+}
+
+// 编辑模式：切换开关。
+function toggleEditMode() {
+  state.editMode = !state.editMode;
+  state._addingTagForReviewId = null;
+  renderFilteredReviews();
+}
+
+// 绑定编辑模式下的行内控件事件。
+function bindEditModeEvents(allDimensions) {
+  // 删除分类按钮
+  els.classifiedTable.querySelectorAll('.badge-delete').forEach((btn) => {
+    btn.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const row = btn.closest('tr');
+      const reviewId = row.dataset.reviewId;
+      const dimId = btn.dataset.dimId;
+      const tagId = btn.dataset.tagId;
+      await deleteClassification(reviewId, dimId, tagId);
+    });
+  });
+
+  // 显示添加标签表单
+  els.classifiedTable.querySelectorAll('.show-add-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state._addingTagForReviewId = btn.dataset.reviewId;
+      renderFilteredReviews();
+    });
+  });
+
+  // 取消添加标签
+  els.classifiedTable.querySelectorAll('.cancel-add-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state._addingTagForReviewId = null;
+      renderFilteredReviews();
+    });
+  });
+
+  // 维度下拉联动标签建议（更新 datalist）
+  els.classifiedTable.querySelectorAll('.add-dim-select').forEach((select) => {
+    select.addEventListener('change', () => {
+      const reviewId = select.dataset.reviewId;
+      const dim = allDimensions.find((d) => d.id === select.value);
+      const datalist = document.getElementById(`tag-datalist-${reviewId}`);
+      if (datalist) {
+        datalist.innerHTML = (dim ? dim.tags.map((tag) => `<option value="${escapeAttr(tag.name)}">`) : []).join('');
+      }
+    });
+  });
+
+  // 确认添加标签（支持自由输入自定义标签名、向性和备注）
+  els.classifiedTable.querySelectorAll('.confirm-add-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const reviewId = btn.dataset.reviewId;
+      const dimSelect = els.classifiedTable.querySelector(`.add-dim-select[data-review-id="${reviewId}"]`);
+      const tagInput = els.classifiedTable.querySelector(`.add-tag-input[data-review-id="${reviewId}"]`);
+      const polaritySelect = els.classifiedTable.querySelector(`.add-polarity-select[data-review-id="${reviewId}"]`);
+      const noteInput = els.classifiedTable.querySelector(`.add-note-input[data-review-id="${reviewId}"]`);
+      const dimId = dimSelect.value;
+      const tagName = (tagInput.value || '').trim();
+      const polarity = (polaritySelect?.value || '').trim();
+      const note = (noteInput?.value || '').trim();
+
+      if (!dimId || !tagName) {
+        window.alert('请同时选择维度和输入标签名。');
+        return;
+      }
+
+      await confirmAddTag(reviewId, dimId, tagName, allDimensions, polarity, note);
+    });
+  });
+
+  // 最近标签快捷选中：点击芯片自动填充表单
+  els.classifiedTable.querySelectorAll('.recent-tag-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const reviewId = chip.dataset.reviewId;
+      const dimSelect = els.classifiedTable.querySelector(`.add-dim-select[data-review-id="${reviewId}"]`);
+      const tagInput = els.classifiedTable.querySelector(`.add-tag-input[data-review-id="${reviewId}"]`);
+      const polaritySelect = els.classifiedTable.querySelector(`.add-polarity-select[data-review-id="${reviewId}"]`);
+      const datalist = document.getElementById(`tag-datalist-${reviewId}`);
+
+      if (dimSelect) dimSelect.value = chip.dataset.dimId;
+      if (tagInput) tagInput.value = chip.dataset.tagName;
+      if (polaritySelect) polaritySelect.value = chip.dataset.polarity;
+
+      // 更新 datalist 以匹配选中的维度
+      if (datalist && dimSelect) {
+        const dim = allDimensions.find((d) => d.id === dimSelect.value);
+        datalist.innerHTML = (dim ? dim.tags.map((tag) => `<option value="${escapeAttr(tag.name)}">`) : []).join('');
+      }
+    });
+  });
+}
+
+// 删除评论的某个分类。
+async function deleteClassification(reviewId, dimId, tagId) {
+  const review = (state.currentResults.reviews || []).find((r) => r.reviewId === reviewId);
+  if (!review) return;
+
+  const originalClasses = (review.classifications || []).map((c) => ({
+    dimensionId: c.dimensionId, dimensionName: c.dimensionName,
+    tagId: c.tagId, tagName: c.tagName, confidence: c.confidence
+  }));
+
+  // 移除匹配的分类
+  const newClasses = (review.classifications || []).filter((c) =>
+    !(c.dimensionId === dimId && (c.tagId === tagId || c.tagName === tagId))
+  );
+
+  try {
+    await saveReviewClassifications(reviewId, newClasses);
+    // 记录修正历史
+    recordEditHistory(review, originalClasses, newClasses, 'tag_removed');
+    // 更新本地状态
+    review.classifications = newClasses;
+    review.isLowConfidence = newClasses.length === 0;
+    updateLocalSummary();
+    await refreshResultsFromServer();
+    // 保存当前筛选状态，避免重建下拉框后丢失
+    const savedDimFilter = els.filterDimension.value;
+    const savedTagFilter = els.filterTag.value;
+    populateFilterDimension();
+    if ([...els.filterDimension.options].some((o) => o.value === savedDimFilter)) {
+      els.filterDimension.value = savedDimFilter;
+    }
+    populateFilterTag(els.filterDimension.value);
+    if ([...els.filterTag.options].some((o) => o.value === savedTagFilter)) {
+      els.filterTag.value = savedTagFilter;
+    }
+    renderFilteredReviews();
+    renderDimensionStats();
+    // 如果评论移到了低置信度，刷新待确认列表
+    if (review.isLowConfidence) {
+      renderLowConfidence();
+    }
+  } catch (error) {
+    window.alert(`删除分类失败：${error.message}`);
+  }
+}
+
+// 添加标签到评论。tagName 可以是已有标签名或自定义新标签名。
+// polarity 和 note 可选，用于手工创建标签时填写向性和备注。
+async function confirmAddTag(reviewId, dimId, tagName, allDimensions, polarity = '', note = '') {
+  const review = (state.currentResults.reviews || []).find((r) => r.reviewId === reviewId);
+  if (!review) return;
+
+  const dim = allDimensions.find((d) => d.id === dimId);
+  const existingTag = dim?.tags.find((t) => t.name === tagName || t.id === tagName);
+
+  const originalClasses = (review.classifications || []).map((c) => ({
+    dimensionId: c.dimensionId, dimensionName: c.dimensionName,
+    tagId: c.tagId, tagName: c.tagName, confidence: c.confidence
+  }));
+
+  // 检查是否已存在相同分类
+  const resolvedTagId = existingTag ? existingTag.id : `custom-${Date.now()}`;
+  const resolvedTagName = existingTag ? existingTag.name : tagName;
+  const exists = (review.classifications || []).some((c) =>
+    c.dimensionId === dimId && (c.tagName === resolvedTagName || c.tagId === resolvedTagId)
+  );
+  if (exists) {
+    window.alert('该标签已存在于此评论上。');
+    return;
+  }
+
+  const newClass = {
+    dimensionId: dimId,
+    dimensionName: dim?.name || '',
+    tagId: resolvedTagId,
+    tagName: resolvedTagName,
+    confidence: 1,
+    manuallyAssigned: true
+  };
+  if (polarity) newClass.polarity = polarity;
+  if (note) newClass.note = note;
+
+  const newClasses = [...(review.classifications || []), newClass];
+
+  try {
+    await saveReviewClassifications(reviewId, newClasses);
+    recordEditHistory(review, originalClasses, newClasses, 'tag_added');
+    addRecentTag(dimId, dim?.name || '', resolvedTagName, polarity);
+    review.classifications = newClasses;
+    review.isLowConfidence = false;
+    // 本地更新 template，确保 datalist 和建议列表立即包含新添加的自定义标签
+    if (!existingTag && state.currentResults?.template?.dimensions) {
+      const templateDim = state.currentResults.template.dimensions.find((d) => d.id === dimId);
+      if (templateDim?.tags) {
+        templateDim.tags.push({ id: resolvedTagId, name: resolvedTagName });
+      }
+    }
+    state._addingTagForReviewId = null;
+    updateLocalSummary();
+    await refreshResultsFromServer();
+    // 保存当前筛选状态，避免重建下拉框后丢失
+    const savedDimFilter2 = els.filterDimension.value;
+    const savedTagFilter2 = els.filterTag.value;
+    populateFilterDimension();
+    if ([...els.filterDimension.options].some((o) => o.value === savedDimFilter2)) {
+      els.filterDimension.value = savedDimFilter2;
+    }
+    populateFilterTag(els.filterDimension.value);
+    if ([...els.filterTag.options].some((o) => o.value === savedTagFilter2)) {
+      els.filterTag.value = savedTagFilter2;
+    }
+    renderFilteredReviews();
+    renderDimensionStats();
+  } catch (error) {
+    window.alert(`添加标签失败：${error.message}`);
+  }
+}
+
+// 保存评论分类到后端（全量替换）。
+async function saveReviewClassifications(reviewId, classifications) {
+  return fetchJson(`/api/analysis/${encodeURIComponent(state.currentResults.id)}/reviews/${encodeURIComponent(reviewId)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ classifications })
+  });
+}
+
+// 从后端重新加载结果中的 dimensionStats、summary 和 template。
+async function refreshResultsFromServer() {
+  try {
+    const data = await fetchJson(`/api/analysis/${encodeURIComponent(state.currentResults.id)}/results`);
+    state.currentResults.dimensionStats = data.dimensionStats;
+    state.currentResults.summary = data.summary;
+    state.currentResults.template = data.template;
+    mergeCustomTagsIntoLocalTemplate();
+  } catch {
+    // 静默失败，前端已有乐观更新
+  }
+}
+
+// 将评论中手工添加的自定义标签合并到本地模板缓存。
+// 服务端模板不包含运行时创建的自定义标签，前端从实际分类数据中提取并补充。
+function mergeCustomTagsIntoLocalTemplate() {
+  const reviews = state.currentResults?.reviews || [];
+  const template = state.currentResults?.template;
+  if (!template?.dimensions) return;
+
+  for (const review of reviews) {
+    for (const c of (review.classifications || [])) {
+      if (!c.manuallyAssigned && !c.suggested) continue;
+      const dim = template.dimensions.find((d) => d.id === c.dimensionId);
+      if (!dim) continue;
+      if (!dim.tags) dim.tags = [];
+      const exists = dim.tags.some((t) => t.id === c.tagId || t.name === c.tagName);
+      if (!exists) {
+        dim.tags.push({ id: c.tagId, name: c.tagName, polarity: c.polarity || '' });
+      }
+    }
+  }
+}
+
+// 记录一条手动修正历史。
+function recordEditHistory(review, originalClasses, newClasses, changeType) {
+  state.editHistory.push({
+    reviewId: review.reviewId,
+    reviewText: review.reviewText || '',
+    originalClasses,
+    newClasses: newClasses.map((c) => ({
+      dimensionId: c.dimensionId, dimensionName: c.dimensionName,
+      tagId: c.tagId, tagName: c.tagName, confidence: c.confidence
+    })),
+    changeType
+  });
+
+  // 显示/隐藏优化按钮
+  if (els.promptOptimizeBtn) {
+    els.promptOptimizeBtn.hidden = state.editHistory.length === 0;
+    if (state.editHistory.length > 0) {
+      els.promptOptimizeBtn.textContent = `优化 Prompt（${state.editHistory.length}）`;
+    }
+  }
+}
+
+// 打开 Prompt 优化弹窗：发送修正记录到后端分析。
+async function openPromptOptimization() {
+  if (state.editHistory.length === 0) return;
+
+  els.promptOptimizeModal.hidden = false;
+  els.promptOptimizeContent.innerHTML = `
+    <div style="text-align: center; padding: 24px;">
+      <p>正在分析 ${state.editHistory.length} 条修正记录...</p>
+      <p class="muted" style="margin-top: 8px;">调用 DeepSeek 分析修正模式并生成 prompt 改进建议</p>
+    </div>
+  `;
+
+  try {
+    const data = await fetchJson(`/api/analysis/${encodeURIComponent(state.currentResults.id)}/prompt-optimization`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ edits: state.editHistory })
+    });
+    renderPromptOptimization(data);
+  } catch (error) {
+    els.promptOptimizeContent.innerHTML = `
+      <div style="color: var(--danger); padding: 24px;">
+        <p>分析失败：${escapeHtml(error.message)}</p>
+        <button class="secondary-button" type="button" onclick="document.getElementById('promptOptimizeModal').hidden=true" style="margin-top: 12px;">关闭</button>
+      </div>
+    `;
+  }
+}
+
+// 渲染 prompt 优化建议。
+function renderPromptOptimization(data) {
+  const suggestions = data.suggestions || [];
+  const summary = data.summary || '';
+
+  if (suggestions.length === 0) {
+    els.promptOptimizeContent.innerHTML = `
+      <p>未发现明显的修正模式，当前 prompt 表现良好。</p>
+      <p class="muted" style="margin-top: 8px;">${summary || ''}</p>
+    `;
+    return;
+  }
+
+  const severityLabel = { high: '严重', medium: '一般', low: '轻微' };
+  const severityColor = { high: 'var(--danger)', medium: '#f0a020', low: 'var(--muted)' };
+
+  els.promptOptimizeContent.innerHTML = `
+    ${summary ? `<div class="opt-summary"><strong>总结：</strong>${escapeHtml(summary)}</div>` : ''}
+    ${suggestions.map((s, i) => `
+      <div class="opt-suggestion" style="border-left: 3px solid ${severityColor[s.severity] || 'var(--line)'}; margin-bottom: 16px; padding: 12px 16px; background: var(--bg-card); border-radius: 8px;">
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+          <span class="opt-severity" style="background: ${severityColor[s.severity] || 'var(--line)'}; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 900;">${severityLabel[s.severity] || s.severity}</span>
+          <span class="opt-category" style="font-size: 12px; color: var(--muted);">${escapeHtml(s.category || '')}</span>
+        </div>
+        <p style="font-weight: 900; margin-bottom: 6px;">${escapeHtml(s.problem || '')}</p>
+        ${s.affectedTags && s.affectedTags.length > 0 ? `
+          <p style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">
+            相关标签：${s.affectedTags.map((t) => `<code style="background: var(--bg); padding: 1px 6px; border-radius: 3px;">${escapeHtml(t)}</code>`).join(' ')}
+          </p>
+        ` : ''}
+        <div class="opt-fix" style="background: var(--bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 8px; font-size: 13px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(s.promptFix || '')}</div>
+        ${s.exampleReviews && s.exampleReviews.length > 0 ? `
+          <p style="font-size: 12px; color: var(--muted);">示例评论：${s.exampleReviews.slice(0, 3).map((r) => `"${escapeHtml(r)}"`).join('、')}</p>
+        ` : ''}
+        ${i < suggestions.length - 1 ? '<hr style="border-color: var(--line); margin-top: 12px;">' : ''}
+      </div>
+    `).join('')}
+    <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end;">
+      <button class="secondary-button compact-button" type="button" onclick="document.getElementById('promptOptimizeModal').hidden=true">关闭</button>
+      <button class="secondary-button compact-button" type="button" style="background: var(--accent); color: #fff; border-color: var(--accent);" onclick="navigator.clipboard.writeText(this.closest('.modal-body').querySelector('.opt-fix')?.textContent || '').then(()=>alert('已复制第一条建议到剪贴板'))">复制建议</button>
+    </div>
+  `;
+}
+
+// 关闭 Prompt 优化弹窗。
+function closePromptOptimization() {
+  els.promptOptimizeModal.hidden = true;
 }
 
 // 从当前结果中重新计算 summary 计数（lowConfidenceCount / classifiedCount）。
@@ -1013,25 +1868,45 @@ function renderLowConfidence() {
   const template = state.currentResults?.template;
   const allDimensions = template?.dimensions || [];
 
+  // 构建 tagId → { polarity, tagName } 的索引
+  const tagMetaMap = new Map();
+  for (const dim of allDimensions) {
+    for (const tag of (dim.tags || [])) {
+      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name });
+    }
+  }
+
   els.lowConfidenceTable.innerHTML = lowConf.map((r) => {
     const regularClasses = (r.classifications || []).filter((c) => !c.suggested);
     const suggestedClasses = (r.classifications || []).filter((c) => c.suggested);
+    const allClasses = (r.classifications || []);
+    const hasNotes = allClasses.some((c) => c.note && c.note.trim());
 
     return `
     <tr data-review-id="${escapeAttr(r.reviewId)}">
-      <td style="max-width: 280px;">
-        <div style="max-height: 80px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(r.reviewText || '')}</div>
+      <td style="max-width: 320px;">
+        <div class="review-text-cell">${escapeHtml(r.reviewText || '')}</div>
       </td>
       <td>${'★'.repeat(Math.min(5, r.starRating || 0))} ${r.starRating || '-'}</td>
       <td>
         <div class="tag-badges">
           ${regularClasses.length > 0
-            ? regularClasses.map((c) => `<span class="tag-badge">${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)} (${Math.round(c.confidence * 100)}%)</span>`).join('')
+            ? regularClasses.map((c) => {
+                const polarity = c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+                const polClass = polarity === '正向' ? 'pol-positive' : polarity === '负向' ? 'pol-negative' : polarity === '需求' ? 'pol-demand' : 'pol-neutral';
+                return `<span class="tag-badge" title="${escapeAttr(c.note || '')}"><span class="polarity-tag ${polClass}">${escapeHtml(polarity)}</span>${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)} (${Math.round(c.confidence * 100)}%)</span>`;
+              }).join('')
             : (suggestedClasses.length === 0 ? '<span class="muted">AI 未能匹配</span>' : '')}
-          ${suggestedClasses.map((c) => `
-            <span class="tag-badge tag-badge--suggested">AI 建议: ${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)} (${Math.round(c.confidence * 100)}%)</span>
-          `).join('')}
+          ${suggestedClasses.map((c) => {
+            const polarity = c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+            const polClass = polarity === '正向' ? 'pol-positive' : polarity === '负向' ? 'pol-negative' : polarity === '需求' ? 'pol-demand' : 'pol-neutral';
+            return `<span class="tag-badge tag-badge--suggested" title="${escapeAttr(c.note || '')}"><span class="polarity-tag ${polClass}">${escapeHtml(polarity)}</span>AI 建议: ${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)} (${Math.round(c.confidence * 100)}%)</span>`;
+          }).join('')}
         </div>
+        ${hasNotes ? `
+        <div class="tag-notes">
+          ${allClasses.filter((c) => c.note && c.note.trim()).map((c) => `<span class="tag-note">📝 ${escapeHtml(c.note.trim())}</span>`).join('')}
+        </div>` : ''}
         ${suggestedClasses.length > 0 ? `
         <div style="margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;">
           ${suggestedClasses.map((c) => `
@@ -1060,7 +1935,7 @@ function renderLowConfidence() {
         <select class="reassign-tag-select" style="height: 28px; font-size: 12px; margin-bottom: 4px;" data-review-id="${escapeAttr(r.reviewId)}">
           <option value="">选择标签</option>
         </select>
-        <button class="secondary-button compact-button reassign-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button">确认分配</button>
+        <button class="secondary-button compact-button reassign-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button">添加标签</button>
         <button class="secondary-button compact-button meaningless-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button" style="background: var(--muted); color: #fff; border-color: var(--muted);">标记无意义</button>
       </td>
     </tr>
@@ -1073,48 +1948,77 @@ function renderLowConfidence() {
       const tagSelect = els.lowConfidenceTable.querySelector(`.reassign-tag-select[data-review-id="${reviewId}"]`);
       const dim = allDimensions.find((d) => d.id === select.value);
       tagSelect.innerHTML = '<option value="">选择标签</option>' +
-        (dim ? dim.tags.map((tag) => `<option value="${escapeAttr(tag.id)}">${escapeHtml(tag.name)}</option>`).join('') : '');
+        (dim ? dim.tags.map((tag) => `<option value="${escapeAttr(tag.id || tag.name)}">${escapeHtml(tag.name)}</option>`).join('') : '');
     });
   });
 
-  // 确认分配按钮
+  // 添加标签按钮：将手动选择的标签追加到评论分类中，保留已有的 AI 建议。
   els.lowConfidenceTable.querySelectorAll('.reassign-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const reviewId = btn.dataset.reviewId;
       const dimSelect = els.lowConfidenceTable.querySelector(`.reassign-dim-select[data-review-id="${reviewId}"]`);
       const tagSelect = els.lowConfidenceTable.querySelector(`.reassign-tag-select[data-review-id="${reviewId}"]`);
       const dimId = dimSelect.value;
-      const tagId = tagSelect.value;
+      const tagValue = tagSelect.value; // 可能是 tagId 或 tagName（空 id 标签的回退）
 
-      if (!dimId || !tagId) {
+      if (!dimId || !tagValue) {
         window.alert('请同时选择维度和标签。');
         return;
       }
 
       const dim = allDimensions.find((d) => d.id === dimId);
-      const tag = dim?.tags.find((t) => t.id === tagId);
+      const tag = dim?.tags.find((t) => t.id === tagValue || t.name === tagValue);
+      const tagName = tag?.name || tagValue;
+      const tagId = tag?.id || tagValue;
+
+      const review = state.currentResults.reviews.find((r) => r.reviewId === reviewId);
+      if (!review) return;
+
+      // 检查是否已存在相同标签
+      const exists = (review.classifications || []).some(
+        (c) => c.dimensionId === dimId && (c.tagId === tagId || c.tagName === tagName)
+      );
+      if (exists) {
+        window.alert('该标签已存在于此评论上。');
+        return;
+      }
+
+      const originalClasses = (review.classifications || []).map((c) => ({
+        dimensionId: c.dimensionId, dimensionName: c.dimensionName,
+        tagId: c.tagId, tagName: c.tagName, confidence: c.confidence,
+        suggested: !!c.suggested
+      }));
+
+      // 追加新标签，保留已有分类
+      const newClasses = [...(review.classifications || []), {
+        dimensionId: dimId,
+        dimensionName: dim?.name || '',
+        tagId: tagId,
+        tagName: tagName,
+        confidence: 1,
+        manuallyAssigned: true
+      }];
 
       try {
-        await fetchJson(`/api/analysis/${encodeURIComponent(state.currentResults.id)}/low-confidence/${encodeURIComponent(reviewId)}`, {
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ dimensionId: dimId, tagId, dimensionName: dim?.name || '', tagName: tag?.name || '' })
-        });
-        // 从当前结果中移除该评论的低置信度标记
-        const review = state.currentResults.reviews.find((r) => r.reviewId === reviewId);
-        if (review) {
-          review.isLowConfidence = false;
-          review.classifications = [{ dimensionId: dimId, tagId, dimensionName: dim?.name || '', tagName: tag?.name || '', confidence: 1, manuallyAssigned: true }];
+        await saveReviewClassifications(reviewId, newClasses);
+
+        recordEditHistory(review, originalClasses, newClasses, 'tag_added');
+        addRecentTag(dimId, dim?.name || '', tagName, tag?.polarity || '');
+        review.classifications = newClasses;
+
+        // 如果还有 AI 建议标签未处理，继续保留在待确认列表
+        const hasSuggestions = newClasses.some((c) => c.suggested);
+        const threshold = state.currentResults.summary?.confidenceThreshold || 0.6;
+        if (!hasSuggestions && newClasses.length > 0) {
+          const hasHighEnough = newClasses.some((c) => c.confidence >= threshold);
+          review.isLowConfidence = !hasHighEnough;
         }
-        // 更新 summary
-        if (state.currentResults.summary) {
-          state.currentResults.summary.lowConfidenceCount = Math.max(0, (state.currentResults.summary.lowConfidenceCount || 1) - 1);
-          state.currentResults.summary.classifiedCount = (state.currentResults.summary.classifiedCount || 0) + 1;
-        }
+
+        updateLocalSummary();
         renderLowConfidence();
         renderDimensionStats();
       } catch (error) {
-        window.alert(`重新分配失败：${error.message}`);
+        window.alert(`添加标签失败：${error.message}`);
       }
     });
   });
@@ -1241,6 +2145,11 @@ function renderLowConfidence() {
           }
         }
         updateLocalSummary();
+        // 记录最近使用的标签
+        const sc = (review?.classifications || []).find(
+          (c) => c.dimensionName === dimensionName && c.tagName === tagName
+        );
+        addRecentTag(data.dimensionId, dimensionName, tagName, sc?.polarity || '');
         renderLowConfidence();
         renderDimensionStats();
       } catch (error) {

@@ -2,7 +2,7 @@
 
 import http from 'node:http';
 import path from 'node:path';
-import { createReadStream } from 'node:fs';
+import { createReadStream, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { access, mkdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import { LocalJobStore } from './src/local-store.mjs';
 import { TemplateStore } from './src/template-store.mjs';
 import { AnalysisStore } from './src/analysis-store.mjs';
 import { runReviewAnalysis } from './src/deepseek-client.mjs';
+import { buildCompareV2Report } from './src/compare-v2-report.mjs';
 
 // 目录规划：
 // - public/ 放浏览器后台页面。
@@ -27,6 +28,7 @@ const filesDir = path.join(dataDir, 'files');
 const templatesSourceDir = path.join(repoRoot, 'templates');
 const templatesDataDir = path.join(repoRoot, 'data', 'templates');
 const analysisDir = path.join(repoRoot, 'data', 'analysis');
+const compareReportsDir = path.join(repoRoot, 'data', 'compare-reports');
 const preferredPort = Number.parseInt(process.env.PORT || '3000', 10);
 const execFileAsync = promisify(execFile);
 
@@ -39,6 +41,7 @@ let apiBase = null;
 // 准备本地存储目录，并识别 Rivioo 当前后端接口地址。
 await mkdir(filesDir, { recursive: true });
 await mkdir(path.join(analysisDir, 'results'), { recursive: true });
+await mkdir(compareReportsDir, { recursive: true });
 await store.init();
 await templateStore.init();
 await analysisStore.init();
@@ -217,6 +220,33 @@ async function route(req, res) {
   // ===== 评论解析接口 =====
 
   // 列出所有分析任务（只返回元数据，不包含完整分类结果）。
+  // Prompt 版本列表
+  if (url.pathname === '/api/prompts/versions' && req.method === 'GET') {
+    try {
+      const versions = getPromptVersionsList();
+      sendJson(res, 200, { versions });
+    } catch (error) {
+      sendJson(res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  // 指定 Prompt 版本的完整内容（含 ${dimensionsDesc} 占位符）
+  const promptVersionMatch = url.pathname.match(/^\/api\/prompts\/versions\/([^/]+)$/);
+  if (promptVersionMatch && req.method === 'GET') {
+    try {
+      const version = getPromptVersion(promptVersionMatch[1]);
+      if (!version) {
+        sendJson(res, 404, { error: 'Prompt 版本不存在。' });
+        return;
+      }
+      sendJson(res, 200, { version });
+    } catch (error) {
+      sendJson(res, 500, { error: error.message });
+    }
+    return;
+  }
+
   if (url.pathname === '/api/analysis' && req.method === 'GET') {
     sendJson(res, 200, { analyses: analysisStore.list().map(analysisForApi) });
     return;
@@ -255,7 +285,8 @@ async function route(req, res) {
       sendJson(res, 404, { error: '分析结果不存在，可能任务尚未完成。' });
       return;
     }
-    sendJson(res, 200, results);
+    const analysis = analysisStore.get(resultsMatch[1]);
+    sendJson(res, 200, { ...results, appName: analysis?.app?.name || results?.template?.name || '' });
     return;
   }
 
@@ -322,6 +353,110 @@ async function route(req, res) {
       sendJson(res, 400, { error: error.message });
     }
     return;
+  }
+
+  // 更新已分类评论的标签：全量替换分类列表。
+  const reviewClassMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/reviews\/([^/]+)$/);
+  if (reviewClassMatch && req.method === 'PUT') {
+    const body = await readJson(req);
+    try {
+      const result = await updateReviewClassifications(reviewClassMatch[1], reviewClassMatch[2], body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // 基于手动修正记录生成 prompt 优化建议。
+  const promptOptMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/prompt-optimization$/);
+  if (promptOptMatch && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const result = await generatePromptOptimization(promptOptMatch[1], body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // ===== 竞品对比接口 =====
+
+  // 列出可按模板分组的已完成分析，用于对比 App 选择。
+  if (url.pathname === '/api/compare/options' && req.method === 'GET') {
+    const groups = buildCompareOptions();
+    sendJson(res, 200, { groups });
+    return;
+  }
+
+  // 生成对比报告：接收多个 analysisId，聚合各 App 的维度标签统计。
+  if (url.pathname === '/api/compare/report' && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const report = await buildCompareReport(body);
+      sendJson(res, 200, report);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // V2 — 生成深度分析报告（用户上传高赞评论 CSV）。
+  if (url.pathname === '/api/compare/v2/report' && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const { analysisIds, csvData } = body;
+      // 从分析任务获取 API Key
+      const firstAnalysis = analysisStore.get(analysisIds[0]);
+      const apiKey = firstAnalysis?.deepseekApiKey || '';
+      if (!apiKey) {
+        throw new Error('未找到 DeepSeek API Key，请先在解析任务中配置。');
+      }
+      const report = await buildCompareV2Report({
+        analysisIds,
+        analysisStore,
+        downloadStore: store,
+        csvDataMap: csvData || {},
+        apiKey
+      });
+      const { reportId, createdAt } = saveCompareReport(report);
+      sendJson(res, 200, { reportId, createdAt, ...report });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // V2 — 列出历史报告。
+  if (url.pathname === '/api/compare/v2/history' && req.method === 'GET') {
+    try {
+      const index = readCompareReportsIndex();
+      sendJson(res, 200, { reports: index });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // V2 — 加载/删除指定报告。
+  const v2ReportMatch = url.pathname.match(/^\/api\/compare\/v2\/report\/([^/]+)$/);
+  if (v2ReportMatch) {
+    const reportId = v2ReportMatch[1];
+    if (req.method === 'GET') {
+      const report = loadCompareReport(reportId);
+      if (!report) {
+        sendJson(res, 404, { error: '报告不存在。' });
+        return;
+      }
+      sendJson(res, 200, report);
+      return;
+    }
+    if (req.method === 'DELETE') {
+      deleteCompareReportById(reportId);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
   }
 
   // 删除分析任务及其结果文件。
@@ -520,6 +655,30 @@ async function sendStatic(pathname, res) {
 
 // 读取浏览器提交的 JSON 请求体。
 // 当前只接收小表单数据，这一版不需要复杂的流式解析。
+// ===== Prompt 版本管理 =====
+
+const PROMPT_VERSIONS_FILE = path.join(process.cwd(), 'data', 'prompts', 'system-prompt-versions.json');
+
+function getPromptVersionsList() {
+  try {
+    const versions = JSON.parse(readFileSync(PROMPT_VERSIONS_FILE, 'utf8'));
+    return versions.map(({ version, createdAt, description, current }) => ({
+      version, createdAt, description, current
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function getPromptVersion(version) {
+  try {
+    const versions = JSON.parse(readFileSync(PROMPT_VERSIONS_FILE, 'utf8'));
+    return versions.find((v) => v.version === version) || null;
+  } catch {
+    return null;
+  }
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -578,7 +737,7 @@ function contentTypeFor(filePath) {
 
 // 创建分析任务：验证参数、创建任务记录、后台启动 DeepSeek 解析。
 async function createAnalysisJob(body) {
-  const { downloadJobIds, templateId, deepseekApiKey, confidenceThreshold = 0.6, parallelTasks = 20, model = 'deepseek-chat', temperature, maxTokens, systemPrompt, userPromptTemplate } = body;
+  const { downloadJobIds, templateId, deepseekApiKey, confidenceThreshold = 0.6, parallelTasks = 20, model = 'deepseek-chat', temperature, maxTokens, systemPrompt, userPromptTemplate, promptVersion } = body;
 
   if (!templateId) throw new Error('请选择分析模板。');
   if (!Array.isArray(downloadJobIds) || downloadJobIds.length === 0) throw new Error('请选择至少一个下载任务。');
@@ -633,7 +792,7 @@ async function createAnalysisJob(body) {
       developer: app.developer || '',
       icon: app.icon || ''
     },
-    config: { parallelTasks, model, confidenceThreshold, temperature: temperature ?? 0.1, maxTokens: maxTokens || 8192 },
+    config: { parallelTasks, model, confidenceThreshold, temperature: temperature ?? 0.1, maxTokens: maxTokens || 8192, promptVersion: promptVersion || '2.0' },
     customPrompt: (systemPrompt || userPromptTemplate) ? { systemPrompt, userPromptTemplate } : undefined,
     deepseekApiKey, // 只在服务端存储，不返回给前端
     summary: null,
@@ -684,6 +843,7 @@ async function runAnalysisJob(analysis, template, csvFilePaths) {
     maxTokens: analysis.config?.maxTokens,
     systemPrompt: analysis.customPrompt?.systemPrompt,
     userPromptTemplate: analysis.customPrompt?.userPromptTemplate,
+    promptVersion: analysis.config?.promptVersion,
     onProgress(status) {
       analysisStore.update(analysis.id, {
         status: 'running',
@@ -965,16 +1125,27 @@ async function ignoreSuggestedTag(analysisId, body) {
 // 重新计算维度/标签统计分布。
 // 在人工重新分配后用于更新 results.dimensionStats。
 function recalcDimensionStats(reviews, template) {
+  // 收集所有评论中实际出现的分类，构建 tagId → tagName 映射（含自定义标签和低置信度评论中已手动确认的标签）
+  const allTagNames = new Map(); // key: "dimId::tagId" → tagName
+  for (const review of (reviews || [])) {
+    for (const c of (review.classifications || [])) {
+      if (c.suggested) continue; // 跳过 AI 建议，只统计已确认/手动分配的分类
+      if (c.tagName) {
+        allTagNames.set(`${c.dimensionId}::${c.tagId}`, c.tagName);
+      }
+    }
+  }
+
   const stats = (template?.dimensions || []).map((dim) => {
-    const tagCounts = new Map();
+    const tagCounts = new Map(); // tagId → count
     for (const tag of (dim.tags || [])) {
       tagCounts.set(tag.id, 0);
     }
 
     let dimCount = 0;
     for (const review of (reviews || [])) {
-      if (review.isLowConfidence) continue;
       for (const c of (review.classifications || [])) {
+        if (c.suggested) continue;
         if (c.dimensionId === dim.id) {
           tagCounts.set(c.tagId, (tagCounts.get(c.tagId) || 0) + 1);
           dimCount += 1;
@@ -987,8 +1158,10 @@ function recalcDimensionStats(reviews, template) {
       dimensionName: dim.name,
       count: dimCount,
       tags: Array.from(tagCounts.entries()).map(([tagId, count]) => {
-        const tag = (dim.tags || []).find((t) => t.id === tagId);
-        return { tagId, tagName: tag?.name || '', count };
+        // 先从模板找，再从未分类评论实际数据中取（支持自定义标签）
+        const templateTag = (dim.tags || []).find((t) => t.id === tagId);
+        const tagName = templateTag?.name || allTagNames.get(`${dim.id}::${tagId}`) || '';
+        return { tagId, tagName, count };
       }).filter((t) => t.count > 0).sort((a, b) => b.count - a.count)
     };
   });
@@ -1021,6 +1194,227 @@ function recalcDimensionStats(reviews, template) {
   return stats.filter((dim) => dim.count > 0);
 }
 
+// 更新已分类评论的分类列表（全量替换），重新计算统计。
+async function updateReviewClassifications(analysisId, reviewId, body) {
+  const { classifications } = body;
+  if (!classifications || !Array.isArray(classifications)) {
+    throw new Error('请提供 classifications 数组。');
+  }
+
+  const results = await analysisStore.loadResults(analysisId);
+  if (!results) throw new Error('分析结果不存在。');
+
+  const review = (results.reviews || []).find((r) => r.reviewId === reviewId);
+  if (!review) throw new Error('评论不存在。');
+
+  // 替换分类列表，保留 suggested 标记以支持待确认流程
+  review.classifications = classifications.map((c) => ({
+    dimensionId: c.dimensionId || '',
+    dimensionName: c.dimensionName || '',
+    tagId: c.tagId || '',
+    tagName: c.tagName || '',
+    confidence: typeof c.confidence === 'number' ? c.confidence : 1,
+    note: typeof c.note === 'string' ? c.note : '',
+    ...(c.suggested ? { suggested: true } : { manuallyAssigned: true })
+  }));
+
+  // 重新判断 isLowConfidence：有 suggested 标记的分类说明 AI 建议尚未确认，保留在待确认列表
+  const threshold = results.summary?.confidenceThreshold || 0.6;
+  const hasSuggestions = review.classifications.some((c) => c.suggested);
+  if (review.classifications.length === 0) {
+    review.isLowConfidence = true;
+  } else if (hasSuggestions) {
+    review.isLowConfidence = true;
+  } else {
+    const hasHighEnough = review.classifications.some((c) => c.confidence >= threshold);
+    review.isLowConfidence = !hasHighEnough;
+  }
+
+  // 更新 summary
+  const revs = results.reviews || [];
+  const lowCount = revs.filter((r) => r.isLowConfidence).length;
+  const classifiedCount = revs.filter((r) => !r.isLowConfidence && r.classifications.length > 0).length;
+  if (results.summary) {
+    results.summary.lowConfidenceCount = lowCount;
+    results.summary.classifiedCount = classifiedCount;
+  }
+
+  // 重新计算维度统计
+  results.dimensionStats = recalcDimensionStats(results.reviews, results.template);
+
+  await analysisStore.saveResults(analysisId, results);
+  await analysisStore.update(analysisId, { summary: results.summary });
+
+  // 将手动分配的自定义标签同步到模板中（如果模板中不存在）
+  const analysis = analysisStore.get(analysisId);
+  if (analysis?.templateId) {
+    await syncCustomTagsToTemplate(analysis.templateId, review.classifications);
+    // 同步更新 results.template 快照，前端 datalist 依赖此数据
+    const syncedTemplate = await templateStore.get(analysis.templateId);
+    if (syncedTemplate) {
+      results.template = syncedTemplate;
+      await analysisStore.saveResults(analysisId, results);
+    }
+  }
+
+  return { ok: true, review };
+}
+
+// 将评论的自定义标签同步到模板维度中。
+async function syncCustomTagsToTemplate(templateId, classifications) {
+  const template = await templateStore.get(templateId);
+  if (!template || !Array.isArray(template.dimensions)) return;
+
+  let changed = false;
+  const dims = template.dimensions;
+
+  for (const c of (classifications || [])) {
+    if (!c.manuallyAssigned || !c.tagName) continue;
+    const dim = dims.find((d) => d.id === c.dimensionId || d.name === c.dimensionName);
+    if (!dim || !Array.isArray(dim.tags)) continue;
+    // 检查标签是否已存在（按名称匹配）
+    const exists = dim.tags.some((t) => t.name === c.tagName || t.id === c.tagId);
+    if (!exists) {
+      dim.tags.push({
+        id: c.tagId || `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: c.tagName
+      });
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await templateStore.update(templateId, { dimensions: dims });
+  }
+}
+
+// 基于手动修正记录，调用 DeepSeek 生成 prompt 优化建议。
+async function generatePromptOptimization(analysisId, body) {
+  const { edits } = body;
+  if (!edits || !Array.isArray(edits) || edits.length === 0) {
+    throw new Error('请提供至少一条修正记录。');
+  }
+
+  const analysis = analysisStore.get(analysisId);
+  if (!analysis) throw new Error('分析任务不存在。');
+
+  const results = await analysisStore.loadResults(analysisId);
+  if (!results) throw new Error('分析结果不存在。');
+
+  const template = results.template;
+  if (!template) throw new Error('模板快照不存在。');
+
+  const apiKey = analysis.deepseekApiKey;
+  if (!apiKey) throw new Error('该分析任务没有 DeepSeek API Key。');
+
+  // 获取当前使用的 system prompt
+  const currentPrompt = analysis.customPrompt?.systemPrompt || '';
+
+  // 构建维度/标签参考列表
+  const dimensionsList = (template.dimensions || []).map((dim) => {
+    const tags = (dim.tags || []).map((t) => `  - ${t.name}${t.polarity ? ` [${t.polarity}]` : ''}${t.productMeaning ? `：${t.productMeaning}` : ''}`).join('\n');
+    return `### ${dim.name}${dim.productMeaning ? `（${dim.productMeaning}）` : ''}\n${tags}`;
+  }).join('\n\n');
+
+  // 构建修正记录摘要（限制数量避免 prompt 过长）
+  const MAX_EDITS_IN_PROMPT = 30;
+  const editsSlice = edits.slice(0, MAX_EDITS_IN_PROMPT);
+  const editsSummary = editsSlice.map((e, i) => {
+    const origTags = (e.originalClasses || []).map((c) => `${c.dimensionName} > ${c.tagName}`).join(', ') || '(无分类)';
+    const newTags = (e.newClasses || []).map((c) => `${c.dimensionName} > ${c.tagName}`).join(', ') || '(清空分类)';
+    return `${i + 1}. 评论文本: "${(e.reviewText || '').slice(0, 100)}"\n   变更类型: ${e.changeType || 'unknown'}\n   AI 原分类: ${origTags}\n   手动修正为: ${newTags}`;
+  }).join('\n\n');
+
+  const systemPrompt = `你是一个专业的 prompt engineering 专家。用户使用 AI 对 APP 评论进行语义分类，然后手动修正了一些分类错误。你的任务是分析这些修正记录，找出 AI 分类的系统性错误模式，并给出具体的 prompt 改进建议。
+
+## 输出格式
+请严格按以下 JSON 格式输出（不要输出其他文字）：
+{
+  "suggestions": [
+    {
+      "severity": "high|medium|low",
+      "category": "标签混淆|维度遗漏|过度分类|分类不足|其他",
+      "problem": "一句话描述问题",
+      "affectedTags": ["标签名1", "标签名2"],
+      "promptFix": "具体的 prompt 修改建议，可直接使用",
+      "exampleReviews": ["示例评论片段"]
+    }
+  ],
+  "summary": "用一句话总结主要问题和修正方向"
+}
+
+## 规则
+1. 关注修正的模式/规律，不要逐条罗列修正记录
+2. 同一类问题合并为一条建议
+3. severity 判断标准：high=出现 5 次以上的模式问题，medium=出现 2-4 次，low=偶发
+4. promptFix 要具体可操作，包含判断标准和示例，可直接添加到 prompt 中
+5. 用中文输出`;
+
+  const userPrompt = `## 模板维度/标签结构
+${dimensionsList}
+
+## 当前使用的 System Prompt
+${currentPrompt || '(使用默认 prompt)'}
+
+## 手动修正记录（共 ${edits.length} 条，以下展示前 ${editsSlice.length} 条）
+${editsSummary}
+
+请分析以上修正记录，输出 prompt 优化建议。`;
+
+  const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: analysis.config?.model || 'deepseek-chat',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: 4096
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`DeepSeek API 请求失败 (HTTP ${response.status})：${errorText.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('DeepSeek 返回了空响应。');
+  }
+
+  // 解析 JSON（兼容 markdown 代码块包裹）
+  let jsonText = content.trim();
+  const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    jsonText = codeBlockMatch[1].trim();
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    // 尝试提取 JSON 对象
+    const objMatch = jsonText.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      parsed = JSON.parse(objMatch[0]);
+    } else {
+      throw new Error('无法解析 DeepSeek 返回的优化建议。');
+    }
+  }
+
+  return {
+    suggestions: parsed.suggestions || [],
+    summary: parsed.summary || ''
+  };
+}
+
 async function listenWithPortFallback(httpServer, startPort) {
   const maxAttempts = 20;
 
@@ -1037,6 +1431,237 @@ async function listenWithPortFallback(httpServer, startPort) {
   }
 
   throw new Error('没有可用端口启动本地后台。');
+}
+
+// ===== 竞品对比辅助函数 =====
+
+// 按模板分组已完成的分析任务，每组至少 2 个 App 才有对比意义。
+// 从关联的下载任务中提取商店链接。
+function resolveStoreUrl(analysis) {
+  const downloadJobIds = analysis.downloadJobIds || [];
+  for (const id of downloadJobIds) {
+    const downloadJob = store.get(id);
+    if (downloadJob) {
+      const storeUrls = downloadJob.app?.storeUrls || {};
+      const stores = downloadJob.app?.stores || [];
+      // 优先返回 Google Play 链接，其次 App Store
+      if (stores.includes('android') && storeUrls.android) return storeUrls.android;
+      if (stores.includes('ios') && storeUrls.ios) return storeUrls.ios;
+      // 回退：取任意第一个
+      const first = Object.values(storeUrls)[0];
+      if (first) return first;
+    }
+  }
+  return null;
+}
+
+// ===== 对比报告持久化 =====
+
+const compareReportsIndexPath = path.join(compareReportsDir, 'index.json');
+
+function readCompareReportsIndex() {
+  try {
+    const raw = readFileSync(compareReportsIndexPath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+function writeCompareReportsIndex(index) {
+  mkdirSync(compareReportsDir, { recursive: true });
+  writeFileSync(compareReportsIndexPath, JSON.stringify(index, null, 2), 'utf8');
+}
+
+function saveCompareReport(report) {
+  const reportId = randomUUID();
+  const now = new Date().toISOString();
+  const index = readCompareReportsIndex();
+
+  const entry = {
+    reportId,
+    templateName: report.templateName || '',
+    appNames: (report.apps || []).map((a) => a.appName),
+    appCount: (report.apps || []).length,
+    createdAt: now
+  };
+
+  // 保存完整报告
+  writeFileSync(path.join(compareReportsDir, `${reportId}.json`), JSON.stringify({ ...report, reportId, createdAt: now }, null, 2), 'utf8');
+
+  // 更新索引
+  index.unshift(entry);
+  if (index.length > 50) index.length = 50;
+  writeCompareReportsIndex(index);
+
+  return { reportId, createdAt: now };
+}
+
+function loadCompareReport(reportId) {
+  const filePath = path.join(compareReportsDir, `${reportId}.json`);
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function deleteCompareReportById(reportId) {
+  const filePath = path.join(compareReportsDir, `${reportId}.json`);
+  try { unlinkSync(filePath); } catch { /* ignore */ }
+  const index = readCompareReportsIndex().filter((e) => e.reportId !== reportId);
+  writeCompareReportsIndex(index);
+}
+
+function buildCompareOptions() {
+  const completed = analysisStore.list().filter((a) => a.status === 'completed');
+  const byTemplate = new Map();
+
+  for (const analysis of completed) {
+    const key = analysis.templateId;
+    if (!byTemplate.has(key)) {
+      byTemplate.set(key, {
+        templateId: key,
+        templateName: analysis.templateName || key,
+        analyses: []
+      });
+    }
+    byTemplate.get(key).analyses.push({
+      id: analysis.id,
+      app: analysis.app,
+      storeUrl: resolveStoreUrl(analysis),
+      summary: analysis.summary,
+      completedAt: analysis.completedAt
+    });
+  }
+
+  return Array.from(byTemplate.values())
+    .filter((g) => g.analyses.length >= 2)
+    .sort((a, b) => b.analyses.length - a.analyses.length);
+}
+
+// 加载多个分析结果，聚合为维度×标签×App 对比矩阵。
+async function buildCompareReport(body) {
+  const { analysisIds } = body;
+  if (!Array.isArray(analysisIds) || analysisIds.length < 2) {
+    throw new Error('请至少选择 2 个已完成的解析任务进行对比。');
+  }
+
+  // 加载所有结果
+  const results = [];
+  for (const id of analysisIds) {
+    const analysis = analysisStore.get(id);
+    if (!analysis) throw new Error(`分析任务 ${id} 不存在。`);
+    if (analysis.status !== 'completed') throw new Error(`分析任务 ${id} 尚未完成。`);
+
+    const result = await analysisStore.loadResults(id);
+    if (!result) throw new Error(`分析任务 ${id} 的结果文件不存在。`);
+
+    // 验证同模板
+    if (results.length > 0 && result.template?.id !== results[0].result.template?.id) {
+      throw new Error('所选分析任务使用了不同的模板，无法对比。请选择同一模板下的 App。');
+    }
+
+    results.push({ analysis, result });
+  }
+
+  const template = results[0].result.template || {};
+  const apps = results.map(({ analysis, result }) => ({
+    analysisId: analysis.id,
+    app: analysis.app || {},
+    storeUrl: resolveStoreUrl(analysis),
+    totalReviews: result.summary?.totalReviews || 0,
+    classifiedCount: result.summary?.classifiedCount || 0,
+    dimensionStats: result.dimensionStats || []
+  }));
+
+  // 构建标签级对比矩阵
+  const dimensionComparison = [];
+  const allDimIds = new Set();
+  for (const app of apps) {
+    for (const ds of app.dimensionStats) {
+      allDimIds.add(ds.dimensionId);
+    }
+  }
+
+  for (const dimId of allDimIds) {
+    const dimTemplate = (template.dimensions || []).find((d) => d.id === dimId) || {};
+    const dimName = dimTemplate.name || dimId;
+    const productMeaning = dimTemplate.productMeaning || '';
+
+    // 收集所有标签
+    const allTags = new Map();
+    for (const app of apps) {
+      const ds = app.dimensionStats.find((d) => d.dimensionId === dimId);
+      if (!ds) continue;
+      for (const tag of (ds.tags || [])) {
+        if (!allTags.has(tag.tagId)) {
+          allTags.set(tag.tagId, { tagId: tag.tagId, tagName: tag.tagName, apps: [] });
+        }
+      }
+    }
+
+    // 填充每个 App 的标签计数 + notes
+    const appTotals = apps.map((app) => {
+      const ds = app.dimensionStats.find((d) => d.dimensionId === dimId);
+      return ds?.count || 0;
+    });
+
+    for (const [tagId, tagEntry] of allTags) {
+      tagEntry.apps = apps.map((app) => {
+        const ds = app.dimensionStats.find((d) => d.dimensionId === dimId);
+        const tagStat = (ds?.tags || []).find((t) => t.tagId === tagId);
+        // 从原始评论中收集该标签下的所有 note（去重去空，最多20条）
+        const resultItem = results.find((r) => r.analysis.id === app.analysisId);
+        const reviews = resultItem?.result?.reviews || [];
+        const notes = [];
+        const seenNotes = new Set();
+        for (const review of reviews) {
+          for (const c of (review.classifications || [])) {
+            if (c.dimensionId === dimId && c.tagId === tagId && c.note && !seenNotes.has(c.note)) {
+              seenNotes.add(c.note);
+              notes.push(c.note);
+              if (notes.length >= 20) break;
+            }
+          }
+          if (notes.length >= 20) break;
+        }
+        return { analysisId: app.analysisId, count: tagStat?.count || 0, notes };
+      });
+    }
+
+    // 标签按总计数降序排列
+    const tags = Array.from(allTags.values()).sort((a, b) => {
+      const sumA = a.apps.reduce((s, x) => s + x.count, 0);
+      const sumB = b.apps.reduce((s, x) => s + x.count, 0);
+      return sumB - sumA;
+    });
+
+    dimensionComparison.push({
+      dimensionId: dimId,
+      dimensionName: dimName,
+      productMeaning,
+      tags,
+      appTotals
+    });
+  }
+
+  // 维度排序：按模板原始顺序
+  const templateOrder = (template.dimensions || []).map((d) => d.id);
+  dimensionComparison.sort((a, b) => {
+    const ai = templateOrder.indexOf(a.dimensionId);
+    const bi = templateOrder.indexOf(b.dimensionId);
+    if (ai === -1 && bi === -1) return 0;
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+
+  return {
+    template: { name: template.name || '', dimensions: template.dimensions || [] },
+    apps,
+    dimensionComparison
+  };
 }
 
 function listenOnce(httpServer, candidatePort) {
