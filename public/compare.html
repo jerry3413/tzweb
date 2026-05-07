@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>竞品对比 — APP 体征后台</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">评</div>
+          <div>
+            <div class="brand-name">APP 体征后台</div>
+            <div class="brand-subtitle">评论数据采集与解析</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="主导航">
+          <a class="nav-item" href="/">
+            <span class="nav-dot"></span>
+            评论下载
+          </a>
+          <span class="nav-item disabled">评论查看</span>
+          <a class="nav-item" href="/analysis.html">
+            <span class="nav-dot"></span>
+            评论解析
+          </a>
+          <a class="nav-item active" href="/compare.html">
+            <span class="nav-dot"></span>
+            竞品对比
+          </a>
+          <span class="nav-item disabled">预警规则</span>
+        </nav>
+
+        <div class="side-note">
+          <span>当前版本</span>
+          <strong>下载 + AI 解析 + 对比</strong>
+          <p>同模板多 App 维度标签对比矩阵，一眼看清竞品差异。</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div id="runtimeNotice" class="runtime-notice" hidden>
+          当前是静态文件预览，不能连接本地服务。请在终端运行 npm run dev 后，打开控制台输出的 http://localhost:端口 地址。
+        </div>
+
+        <section class="workspace" id="selectionSection">
+          <div class="download-panel">
+            <div class="panel-ruler">
+              <span>选择模板</span>
+              <span>勾选 App</span>
+              <span>生成对比矩阵</span>
+            </div>
+            <div class="section-title">
+              <div>
+                <h2>竞品对比分析</h2>
+                <p>选择同一模板下的多个 App 解析结果，生成维度 × 标签对比矩阵。</p>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label class="field">
+                <span>分析模板</span>
+                <select id="templateSelect">
+                  <option value="">-- 选择模板 --</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="appCheckList" style="margin-top: 14px;">
+              <span class="field"><span>选择对比 App</span></span>
+              <div id="appCheckItems" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 10px;">
+                <span class="muted">请先选择模板</span>
+              </div>
+            </div>
+
+            <div id="csvUploadSection" style="margin-top: 14px;" hidden>
+              <span class="field"><span>上传高赞评论 CSV（可选，每个 App 一个 CSV 文件）</span></span>
+              <div id="csvUploadInputs" style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+
+            <div style="margin-top: 14px; display: flex; gap: 10px; align-items: center;">
+              <div class="compare-mode-tabs">
+                <button class="compare-mode-tab active" data-mode="matrix" type="button">矩阵对比</button>
+                <button class="compare-mode-tab" data-mode="deep" type="button">深度分析</button>
+              </div>
+              <button id="generateBtn" class="primary-button" type="button" disabled>生成对比报告</button>
+              <button id="generateV2Btn" class="primary-button" type="button" disabled hidden style="background: var(--accent); border-color: var(--accent);">生成深度分析报告</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="jobs-section" id="reportSection" hidden>
+          <div class="section-title">
+            <div>
+              <h2 id="reportTitle">对比报告</h2>
+              <p id="reportSummary"></p>
+            </div>
+            <button id="backToSelect" class="secondary-button" type="button">返回选择</button>
+          </div>
+
+          <div id="appOverview" class="compare-app-overview"></div>
+          <div id="compareMatrix"></div>
+        </section>
+
+        <!-- V2 深度分析报告 -->
+        <section class="jobs-section" id="v2ReportSection" hidden>
+          <div class="section-title">
+            <div>
+              <h2 id="v2ReportTitle">深度分析报告</h2>
+              <p id="v2ReportSummary"></p>
+            </div>
+            <button id="backToSelectV2" class="secondary-button" type="button">返回选择</button>
+          </div>
+
+          <div id="v2DataOverview" class="v2-section-block"></div>
+          <div id="v2Summary" class="v2-section-block"></div>
+          <div id="v2UserFocus" class="v2-section-block"></div>
+          <div id="v2Likes" class="v2-section-block"></div>
+          <div id="v2Suggestions" class="v2-section-block"></div>
+          <div id="v2Complaints" class="v2-section-block"></div>
+          <div id="v2TopReviews" class="v2-section-block"></div>
+          <div id="v2CrossCutting" class="v2-section-block"></div>
+        </section>
+
+        <!-- V2 历史记录 -->
+        <section class="jobs-section" id="v2HistorySection">
+          <div class="section-title">
+            <h2>历史报告</h2>
+          </div>
+          <div id="v2HistoryList"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/shared.js"></script>
+    <script src="/compare.js"></script>
+  </body>
+</html>

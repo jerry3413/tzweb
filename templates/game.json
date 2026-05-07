@@ -1,0 +1,111 @@
+{
+  "id": "builtin-game",
+  "name": "游戏评论分析模板",
+  "category": "游戏",
+  "description": "适用于移动游戏评论的分类分析，覆盖使用动机、场景、功能、性能、付费、社交、技术稳定性等维度。",
+  "isBuiltIn": true,
+  "createdAt": "2026-05-04T00:00:00.000Z",
+  "updatedAt": "2026-05-04T00:00:00.000Z",
+  "dimensions": [
+    {
+      "id": "dim-game-motive",
+      "name": "使用动机",
+      "productMeaning": "用户下载的核心任务",
+      "tags": [
+        { "id": "tag-game-motive-relax", "name": "解压放松" },
+        { "id": "tag-game-motive-killtime", "name": "打发时间" },
+        { "id": "tag-game-motive-antianxiety", "name": "抗焦虑" },
+        { "id": "tag-game-motive-sleep", "name": "助眠" }
+      ]
+    },
+    {
+      "id": "dim-game-scene",
+      "name": "使用场景",
+      "productMeaning": "决定功能设计权重",
+      "tags": [
+        { "id": "tag-game-scene-presleep", "name": "入睡前" },
+        { "id": "tag-game-scene-anxious", "name": "感到焦虑时" },
+        { "id": "tag-game-scene-stressed", "name": "有压力时" }
+      ]
+    },
+    {
+      "id": "dim-game-completeness",
+      "name": "功能完整性",
+      "productMeaning": "核心功能覆盖度",
+      "tags": [
+        { "id": "tag-game-completeness-variety", "name": "游戏种类丰富" },
+        { "id": "tag-game-completeness-lack", "name": "游戏选择少" }
+      ]
+    },
+    {
+      "id": "dim-game-quality",
+      "name": "功能质量",
+      "productMeaning": "体验深度",
+      "tags": [
+        { "id": "tag-game-quality-sound", "name": "音效好" },
+        { "id": "tag-game-quality-sound-bad", "name": "音效不真实" },
+        { "id": "tag-game-quality-graphics", "name": "3D图形不好" }
+      ]
+    },
+    {
+      "id": "dim-game-offline",
+      "name": "离线/可用性",
+      "productMeaning": "使用门槛",
+      "tags": [
+        { "id": "tag-game-offline-yes", "name": "可离线使用" },
+        { "id": "tag-game-offline-data", "name": "需要数据" }
+      ]
+    },
+    {
+      "id": "dim-game-ads",
+      "name": "广告体验",
+      "productMeaning": "商业化体验",
+      "tags": [
+        { "id": "tag-game-ads-ok", "name": "广告不打扰" },
+        { "id": "tag-game-ads-many", "name": "广告多" },
+        { "id": "tag-game-ads-paidstill", "name": "付费后仍有广告" }
+      ]
+    },
+    {
+      "id": "dim-game-ui",
+      "name": "UI/交互",
+      "productMeaning": "信息架构和效率",
+      "tags": [
+        { "id": "tag-game-ui-easy", "name": "浏览方便" },
+        { "id": "tag-game-ui-hard", "name": "找游戏不方便" },
+        { "id": "tag-game-ui-laggy", "name": "操作不灵敏" }
+      ]
+    },
+    {
+      "id": "dim-game-personal",
+      "name": "个性化/自定义",
+      "productMeaning": "控制感和偏好",
+      "tags": [
+        { "id": "tag-game-personal-theme", "name": "主题" },
+        { "id": "tag-game-personal-dark", "name": "黑夜模式" },
+        { "id": "tag-game-personal-vibrate", "name": "关闭震动" }
+      ]
+    },
+    {
+      "id": "dim-game-stability",
+      "name": "技术稳定性",
+      "productMeaning": "基础体验底线",
+      "tags": [
+        { "id": "tag-game-stability-load", "name": "加载失败" },
+        { "id": "tag-game-stability-heat", "name": "发热" },
+        { "id": "tag-game-stability-lag", "name": "卡顿" },
+        { "id": "tag-game-stability-crash", "name": "崩溃" }
+      ]
+    },
+    {
+      "id": "dim-game-pay",
+      "name": "付费体验",
+      "productMeaning": "付费转化和信任",
+      "tags": [
+        { "id": "tag-game-pay-willing", "name": "愿意付费去广告" },
+        { "id": "tag-game-pay-restore", "name": "恢复购买失败" },
+        { "id": "tag-game-pay-price", "name": "定价恶心" }
+      ]
+    }
+  ]
+}
