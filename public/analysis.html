@@ -37,7 +37,7 @@
         <div class="side-note">
           <span>当前版本</span>
           <strong>下载 + AI 解析</strong>
-          <p>基于 DeepSeek 语义理解对评论进行多维标签分类，低置信度结果支持人工确认。</p>
+          <p>基于 AI 语义理解对评论进行多维标签分类，低置信度结果支持人工确认。</p>
         </div>
       </aside>
 
@@ -59,7 +59,7 @@
                 <h2>评论解析模板</h2>
                 <p>选择或自定义分析模板，定义评论需要按哪些维度和标签进行分类。</p>
               </div>
-              <button id="newTemplateBtn" class="secondary-button" type="button">新建模板</button>
+              <button id="createTemplateBtn" class="primary-button" type="button">新增模板</button>
             </div>
             <div id="templateList" class="template-list">
               正在加载模板...
@@ -72,7 +72,10 @@
           <div class="template-editor-panel">
             <div class="section-title">
               <h2 id="templateEditorTitle">编辑模板</h2>
-              <button id="closeTemplateEditor" class="secondary-button compact-button" type="button">关闭</button>
+              <div style="display: flex; gap: 8px;">
+                <button id="exportTemplateInEditorBtn" class="secondary-button compact-button" type="button">导出 JSON</button>
+                <button id="closeTemplateEditor" class="secondary-button compact-button" type="button">关闭</button>
+              </div>
             </div>
             <label class="field full">
               <span>模板名称</span>
@@ -85,6 +88,13 @@
             <label class="field full">
               <span>描述</span>
               <input id="templateDescription" type="text" placeholder="简要描述模板的适用场景">
+            </label>
+            <label class="field full">
+              <span>模板模式</span>
+              <select id="templateMode">
+                <option value="">标准（默认）</option>
+                <option value="体征list">体征list</option>
+              </select>
             </label>
             <div id="dimensionsEditor" class="dimensions-editor"></div>
             <button id="addDimensionBtn" class="secondary-button" type="button">+ 添加维度</button>
@@ -102,11 +112,18 @@
             <div class="section-title">
               <div>
                 <h2>新建解析任务</h2>
-                <p>选择已下载的 App 评论，套用分析模板，启动 AI 语义解析。</p>
+                <p>选择已下载的 App 评论或上传自定义 CSV，套用分析模板，启动 AI 语义解析。</p>
               </div>
             </div>
 
-            <div class="form-grid">
+            <!-- 数据源选择 -->
+            <div class="results-tabs" id="dataSourceTabs" style="margin-bottom: 14px;">
+              <button class="results-tab active" data-source="downloaded">已下载 App</button>
+              <button class="results-tab" data-source="custom">自定义上传</button>
+            </div>
+
+            <!-- 已下载 App 面板 -->
+            <div id="downloadedSourcePanel">
               <label class="field">
                 <span>目标 App</span>
                 <div class="custom-select" id="appSelectWrapper">
@@ -116,7 +133,25 @@
                   <div class="custom-select-dropdown" id="appSelectDropdown" hidden></div>
                 </div>
               </label>
+            </div>
 
+            <!-- 自定义上传面板 -->
+            <div id="customSourcePanel" hidden>
+              <label class="field full">
+                <span>App 名称</span>
+                <input id="customAppName" type="text" placeholder="输入 App 名称（用于结果列表标识）">
+              </label>
+              <label class="field full">
+                <span>上传评论 CSV</span>
+                <input id="customCsvFileInput" type="file" accept=".csv">
+              </label>
+              <p class="fine-print">
+                请按标准格式准备 CSV。<a id="downloadTemplateLink" href="/api/csv-template" download>下载模板</a>
+              </p>
+              <p id="customCsvInfo" class="muted" hidden></p>
+            </div>
+
+            <div class="form-grid">
               <label class="field">
                 <span>分析模板</span>
                 <select id="analysisTemplateSelect">
@@ -136,7 +171,7 @@
             </div>
 
             <label class="field full" style="margin-top: 14px;">
-              <span>DeepSeek API Key</span>
+              <span>API Key</span>
               <input id="apiKeyInput" type="password" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
             </label>
 
@@ -147,25 +182,44 @@
             <div id="advancedSettings" style="display: none; margin-top: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fffefa;">
               <div class="form-grid">
                 <label class="field">
-                  <span>模型</span>
-                  <select id="modelSelect">
-                    <option value="deepseek-chat" selected>deepseek-chat</option>
-                    <option value="deepseek-reasoner">deepseek-reasoner</option>
+                  <span>AI 提供商</span>
+                  <select id="providerSelect">
+                    <option value="">加载中...</option>
                   </select>
                 </label>
+                <label class="field">
+                  <span>模型</span>
+                  <select id="modelSelect">
+                    <option value="">请先选择提供商</option>
+                  </select>
+                </label>
+                <div id="customProviderConfig" style="display: none;">
+                  <label class="field full">
+                    <span>自定义 API 端点</span>
+                    <input id="customApiBaseInput" type="url" placeholder="https://api.example.com/v1/chat/completions">
+                  </label>
+                  <label class="field">
+                    <span>模型 ID</span>
+                    <input id="customModelInput" type="text" placeholder="your-model-id">
+                  </label>
+                </div>
                 <label class="field">
                   <span>Temperature</span>
                   <input id="temperatureInput" type="number" value="0.1" min="0" max="2" step="0.1">
                 </label>
+              </div>
+              <div class="form-grid" style="margin-top: 14px; margin-bottom: 10px;">
                 <label class="field">
                   <span>Max Tokens</span>
                   <input id="maxTokensInput" type="number" value="8192" min="100" max="32768" step="100">
                 </label>
-              </div>
-              <div class="form-grid" style="margin-top: 14px;">
                 <label class="field">
                   <span>并行任务数</span>
                   <input id="parallelTasksInput" type="number" value="20" min="1" max="50" step="1">
+                </label>
+                <label class="field">
+                  <span>单次解析条数</span>
+                  <input id="maxReviewsPerBatchInput" type="number" value="20" min="1" max="200" step="1">
                 </label>
               </div>
               <div class="form-grid" style="margin-bottom: 10px;">
@@ -229,9 +283,12 @@
               <h2 id="resultsTitle">解析结果</h2>
               <p id="resultsSummary"></p>
             </div>
-            <button id="exportResultsBtn" class="secondary-button" type="button">导出 CSV</button>
-            <button id="backToJobsBtn" class="secondary-button" type="button">返回任务列表</button>
-            <button id="promptOptimizeBtn" class="secondary-button" type="button" hidden style="background: var(--accent); color: #fff; border-color: var(--accent);">优化 Prompt</button>
+            <div class="section-title-actions">
+              <button id="exportResultsBtn" class="secondary-button" type="button">导出 CSV</button>
+              <button id="translateBtn" class="secondary-button" type="button" hidden>翻译原文</button>
+              <button id="backToJobsBtn" class="secondary-button" type="button">返回任务列表</button>
+              <button id="promptOptimizeBtn" class="secondary-button" type="button" hidden style="background: var(--accent); color: #fff; border-color: var(--accent);">优化 Prompt</button>
+            </div>
           </div>
 
           <!-- Tab 导航 -->
@@ -252,6 +309,7 @@
                 <option value="中性">中性</option>
                 <option value="需求">需求</option>
               </select>
+              <button id="listClusterBtn" class="secondary-button compact-button" type="button">list聚类</button>
               <button id="polaritySortBtn" class="secondary-button compact-button" type="button" style="margin-left: auto;">向性排序</button>
             </div>
             <div id="dimensionStats" class="dimension-stats"></div>
@@ -288,21 +346,39 @@
                 <option value="">全部</option>
                 <option value="yes">有备注</option>
               </select>
+              <span style="font-weight: 900; font-size: 13px;" id="filterLevel3Label" hidden>3级分类：</span>
+              <select id="filterLevel3" style="height: 34px; border: 1px solid var(--line-dark); border-radius: 8px; padding: 0 10px;" hidden>
+                <option value="">全部</option>
+                <option value="bug">bug</option>
+                <option value="需求/建议">需求/建议</option>
+                <option value="不会操作">不会操作</option>
+                <option value="与程序无关">与程序无关</option>
+                <option value="吐槽">吐槽</option>
+                <option value="null">未分类</option>
+              </select>
               <button id="editToggleBtn" class="secondary-button compact-button edit-toggle" type="button" style="margin-left: auto;">编辑标签</button>
+            </div>
+            <div id="classifiedBatchBar" class="batch-action-bar" hidden>
+              <span class="batch-action-info">已选 <strong id="classifiedSelectedCount">0</strong> 条</span>
+              <button id="classifiedBatchDeleteBtn" class="secondary-button compact-button" type="button" style="background: var(--red); color: #fff; border-color: var(--red);">批量删除标签</button>
+              <button id="classifiedBatchAddTagBtn" class="secondary-button compact-button" type="button">批量添加标签</button>
+              <button id="classifiedClearSelectionBtn" class="secondary-button compact-button" type="button" style="background: transparent; border-color: var(--line);">取消选择</button>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
+                    <th style="width: 32px;"><input type="checkbox" id="classifiedSelectAll" title="全选"></th>
                     <th>评论内容</th>
                     <th>评分</th>
+                    <th>App 版本</th>
                     <th>分类结果</th>
                     <th>置信度</th>
                     <th>评论日期</th>
                   </tr>
                 </thead>
                 <tbody id="classifiedTable">
-                  <tr><td colspan="5" class="empty">暂无数据。</td></tr>
+                  <tr><td colspan="7" class="empty">暂无数据。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -311,19 +387,28 @@
           <!-- Tab: 待确认 -->
           <div class="results-tab-panel" id="tab-lowconfidence" hidden>
             <p id="lowConfidenceSummary" style="margin-bottom: 14px;">以下评论的 AI 分类置信度低于阈值，需要人工确认或重新分配。</p>
+            <div id="lowConfBatchBar" class="batch-action-bar" hidden>
+              <span class="batch-action-info">已选 <strong id="lowConfSelectedCount">0</strong> 条</span>
+              <button id="batchDeleteTagsBtn" class="secondary-button compact-button" type="button" style="background: var(--red); color: #fff; border-color: var(--red);">批量删除标签</button>
+              <button id="batchAddTagBtn" class="secondary-button compact-button" type="button">批量添加标签</button>
+              <button id="batchReclassifyBtn" class="secondary-button compact-button" type="button" style="background: var(--accent); color: #fff; border-color: var(--accent);">批量AI重分类</button>
+              <button id="batchClearSelectionBtn" class="secondary-button compact-button" type="button" style="background: transparent; border-color: var(--line);">取消选择</button>
+            </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
+                    <th style="width: 32px;"><input type="checkbox" id="lowConfSelectAll" title="全选"></th>
                     <th>评论内容</th>
                     <th>评分</th>
+                    <th>App 版本</th>
                     <th>AI 建议分类</th>
                     <th>置信度</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody id="lowConfidenceTable">
-                  <tr><td colspan="5" class="empty">没有待确认的评论。</td></tr>
+                  <tr><td colspan="7" class="empty">没有待确认的评论。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -349,6 +434,201 @@
               <button class="modal-close" id="promptOptimizeClose" type="button">✕</button>
             </div>
             <div class="modal-body" id="promptOptimizeContent"></div>
+          </div>
+        </div>
+
+        <!-- 翻译设置弹窗 -->
+        <div class="modal-overlay" id="translateModal" hidden>
+          <div class="modal-container" style="max-width: 560px;">
+            <div class="modal-header">
+              <h3>翻译设置</h3>
+              <button class="modal-close" id="translateModalClose" type="button">✕</button>
+            </div>
+            <div class="modal-body">
+              <div class="form-grid" style="margin-bottom: 14px;">
+                <label class="field">
+                  <span>AI 提供商</span>
+                  <select id="translateProviderSelect"></select>
+                </label>
+                <label class="field">
+                  <span>模型</span>
+                  <select id="translateModelSelect">
+                    <option value="">请先选择提供商</option>
+                  </select>
+                </label>
+              </div>
+              <div id="translateCustomConfig" style="display: none;">
+                <label class="field full" style="margin-bottom: 8px;">
+                  <span>自定义 API 端点</span>
+                  <input id="translateCustomApiBase" type="url" placeholder="https://api.example.com/v1/chat/completions">
+                </label>
+                <label class="field" style="margin-bottom: 14px;">
+                  <span>模型 ID</span>
+                  <input id="translateCustomModel" type="text" placeholder="your-model-id">
+                </label>
+              </div>
+              <label class="field full" style="margin-bottom: 14px;">
+                <span>API Key</span>
+                <input id="translateApiKey" type="password" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+              </label>
+              <div class="form-grid" style="margin-bottom: 14px;">
+                <label class="field">
+                  <span>目标语言</span>
+                  <select id="translateTargetLang">
+                    <option value="简体中文" selected>简体中文</option>
+                    <option value="繁體中文">繁體中文</option>
+                    <option value="English">English</option>
+                    <option value="日本語">日本語</option>
+                    <option value="한국어">한국어</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Temperature</span>
+                  <input id="translateTemperature" type="number" value="0.1" min="0" max="2" step="0.1">
+                </label>
+                <label class="field">
+                  <span>翻译范围</span>
+                  <select id="translateScope">
+                    <option value="all">全部评论（有原文）</option>
+                    <option value="lowconfidence">仅待确认</option>
+                  </select>
+                </label>
+              </div>
+              <div class="form-grid" style="margin-bottom: 14px;">
+                <label class="field">
+                  <span>并行任务数</span>
+                  <input id="translateParallelTasks" type="number" value="3" min="1" max="10" step="1">
+                </label>
+                <label class="field">
+                  <span>单次翻译条数</span>
+                  <input id="translateBatchSize" type="number" value="15" min="1" max="50" step="1">
+                </label>
+              </div>
+              <label class="field full" style="margin-bottom: 14px;">
+                <span>翻译 Prompt <span class="fine-print" style="display: inline; padding: 0; border: none; background: none; font-weight: 400;">（可自定义）</span></span>
+                <textarea id="translateSystemPrompt" rows="8" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;"></textarea>
+              </label>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="startTranslateBtn" class="primary-button" type="button">开始翻译</button>
+                <span id="translateProgress" class="muted" hidden></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新增模板弹窗（三 tab：手动创建 / 导入 JSON / 表格生成） -->
+        <div class="modal-overlay" id="createTemplateModal" hidden>
+          <div class="modal-container" style="max-width: 680px;">
+            <div class="modal-header">
+              <h3>新增模板</h3>
+              <button class="modal-close" id="createTemplateClose" type="button">✕</button>
+            </div>
+            <div class="modal-body">
+              <nav class="results-tabs" id="createTemplateTabs">
+                <button class="results-tab active" data-tab="manual">手动创建</button>
+                <button class="results-tab" data-tab="import">导入 JSON</button>
+                <button class="results-tab" data-tab="table">表格生成</button>
+              </nav>
+
+              <!-- Tab 1: 手动创建 -->
+              <div class="results-tab-panel" id="tab-manual">
+                <label class="field full" style="margin-bottom: 14px;">
+                  <span>模板名称</span>
+                  <input id="manualTemplateName" type="text" placeholder="例如：游戏评论分析模板">
+                </label>
+                <button id="createBlankBtn" class="primary-button" type="button">创建并编辑</button>
+              </div>
+
+              <!-- Tab 2: 导入 JSON -->
+              <div class="results-tab-panel" id="tab-import" hidden>
+                <p class="fine-print" style="margin-bottom: 14px;">
+                  导入已有的模板 JSON 文件，预览确认后保存。
+                </p>
+                <label class="field full" style="margin-bottom: 14px;">
+                  <span>选择 JSON 文件</span>
+                  <input type="file" id="importTemplateFileInput" accept=".json" style="padding: 6px;">
+                </label>
+                <button id="importJsonBtn" class="primary-button" type="button">导入并编辑</button>
+              </div>
+
+              <!-- Tab 3: 表格生成 -->
+              <div class="results-tab-panel" id="tab-table" hidden>
+                <p class="fine-print" style="margin-bottom: 14px;">
+                  粘贴 CSV / Markdown 表格文本，或上传 Excel (.xlsx) / CSV 文件。AI 将自动识别列结构并生成分析模板。
+                </p>
+
+                <label class="field full" style="margin-bottom: 10px;">
+                  <span>上传文件（可选）</span>
+                  <input type="file" id="tableFileInput" accept=".xlsx,.csv" style="padding: 6px;">
+                </label>
+
+                <label class="field full" style="margin-bottom: 10px;">
+                  <span>或直接粘贴表格文本</span>
+                  <textarea id="tableTextInput" rows="10" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;" placeholder="示例：
+维度,正向标签,负向标签
+广告体验,广告较少,广告太多
+功能质量,转换效果好,转换模糊
+..."></textarea>
+                </label>
+
+                <label class="field full" style="margin-bottom: 10px;">
+                  <span>API Key</span>
+                  <input id="tableToTemplateApiKey" type="password" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                </label>
+
+                <div class="form-grid" style="margin-bottom: 14px;">
+                  <label class="field">
+                    <span>AI 提供商</span>
+                    <select id="tableToTemplateProvider"></select>
+                  </label>
+                  <label class="field">
+                    <span>模型</span>
+                    <select id="tableToTemplateModel"></select>
+                  </label>
+                </div>
+
+                <div style="display: flex; gap: 10px;">
+                  <button id="parseTableBtn" class="primary-button" type="button">AI 解析生成模板</button>
+                </div>
+                <div id="parseTableStatus" class="muted" style="margin-top: 10px;" hidden></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 批量删除标签选择弹窗 -->
+        <div class="modal-overlay" id="batchDeleteTagsModal" hidden>
+          <div class="modal-container" style="max-width: 560px;">
+            <div class="modal-header">
+              <h3>选择要删除的标签</h3>
+              <button class="modal-close" id="batchDeleteTagsClose" type="button">✕</button>
+            </div>
+            <div class="modal-body">
+              <p class="fine-print" style="margin-bottom: 10px;">以下是被选中评论中出现的所有标签。勾选需要删除的标签，未勾选的标签将保留。</p>
+              <div style="margin-bottom: 10px;">
+                <label style="cursor: pointer; font-size: 13px;"><input type="checkbox" id="batchDeleteSelectAllTags" checked> 全选 / 取消全选</label>
+              </div>
+              <div id="batchDeleteTagsList" style="max-height: 300px; overflow-y: auto; margin-bottom: 14px;"></div>
+              <div style="display: flex; gap: 10px;">
+                <button id="batchDeleteConfirmBtn" class="primary-button" type="button" style="background: var(--red); border-color: var(--red);">确认删除选中标签</button>
+                <button id="batchDeleteCancelBtn" class="secondary-button" type="button" style="background: transparent; border-color: var(--line);">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI 重分类结果弹窗 -->
+        <div class="modal-overlay" id="reclassifyModal" hidden>
+          <div class="modal-container" style="max-width: 640px;">
+            <div class="modal-header">
+              <h3>AI 重分类建议</h3>
+              <button class="modal-close" id="reclassifyModalClose" type="button">✕</button>
+            </div>
+            <div class="modal-body">
+              <div id="reclassifyReviewText" style="margin-bottom: 14px; padding: 10px; background: var(--ground); border-radius: 8px; font-size: 14px; line-height: 1.5;"></div>
+              <div id="reclassifyResult" style="margin-bottom: 14px;"></div>
+              <div id="reclassifyActions" style="display: flex; gap: 10px;"></div>
+            </div>
           </div>
         </div>
       </main>

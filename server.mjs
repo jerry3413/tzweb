@@ -12,8 +12,10 @@ import { DEFAULT_EMAIL, resolveRiviooApiBase, runReviewDownload } from './src/ri
 import { LocalJobStore } from './src/local-store.mjs';
 import { TemplateStore } from './src/template-store.mjs';
 import { AnalysisStore } from './src/analysis-store.mjs';
-import { runReviewAnalysis } from './src/deepseek-client.mjs';
+import { runReviewAnalysis, analyzeBatch } from './src/deepseek-client.mjs';
 import { buildCompareV2Report } from './src/compare-v2-report.mjs';
+import { translateAllReviews } from './src/translate-reviews.mjs';
+import { loadProviders } from './src/llm-client.mjs';
 
 // 目录规划：
 // - public/ 放浏览器后台页面。
@@ -82,6 +84,11 @@ async function route(req, res) {
     // 手动刷新接口地址：如果 Rivioo 运行中更换后端，产品/管理员不必重启本地服务。
     apiBase = await resolveRiviooApiBase({ refresh: true });
     sendJson(res, 200, { apiBase });
+    return;
+  }
+
+  if (url.pathname === '/api/providers' && req.method === 'GET') {
+    sendJson(res, 200, loadProviders());
     return;
   }
 
@@ -316,6 +323,32 @@ async function route(req, res) {
     return;
   }
 
+  // 批量删除标签：清除选中评论的所有分类标签。
+  const batchDeleteTagsMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/reviews\/batch-delete-tags$/);
+  if (batchDeleteTagsMatch && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const count = await batchDeleteReviewTags(batchDeleteTagsMatch[1], body);
+      sendJson(res, 200, { ok: true, count });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // 批量添加标签：向选中评论添加同一标签。
+  const batchAddTagMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/reviews\/batch-add-tag$/);
+  if (batchAddTagMatch && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const result = await batchAddTagToReviews(batchAddTagMatch[1], body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   // 人工确认时新增标签：写入分析结果和源模板。
   const addTagMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/tags$/);
   if (addTagMatch && req.method === 'POST') {
@@ -368,6 +401,32 @@ async function route(req, res) {
     return;
   }
 
+  // 单条评论 AI 重分类：对单条评论重新调用 LLM 获取分类建议。
+  const reclassifyMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/reviews\/([^/]+)\/reclassify$/);
+  if (reclassifyMatch && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const result = await reclassifySingleReview(reclassifyMatch[1], reclassifyMatch[2], body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // 批量评论 AI 重分类：对多条评论批量调用 LLM 获取分类建议。
+  const batchReclassifyMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/reviews\/batch-reclassify$/);
+  if (batchReclassifyMatch && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const result = await batchReclassifyReviews(batchReclassifyMatch[1], body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
   // 基于手动修正记录生成 prompt 优化建议。
   const promptOptMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/prompt-optimization$/);
   if (promptOptMatch && req.method === 'POST') {
@@ -381,6 +440,20 @@ async function route(req, res) {
     return;
   }
 
+
+  // 翻译评论原文：使用 AI 将评论翻译为目标语言，结果写回 analysis results。
+  const translateMatch = url.pathname.match(/^\/api\/analysis\/([^/]+)\/translate$/);
+  if (translateMatch && req.method === 'POST') {
+    const body = await readJson(req);
+    try {
+      const analysisId = translateMatch[1];
+      const result = await runTranslation(analysisId, body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
   // ===== 竞品对比接口 =====
 
   // 列出可按模板分组的已完成分析，用于对比 App 选择。
@@ -966,12 +1039,157 @@ async function batchReassignLowConfidence(analysisId, body) {
   return matched;
 }
 
-// 人工确认时新增标签：同时写入分析结果的模板快照和源模板文件。
-async function addTagToTemplateAndResults(analysisId, body) {
-  const { dimensionId, tagName } = body;
-  if (!dimensionId || !tagName) throw new Error('请提供 dimensionId 和 tagName。');
+// 批量删除标签：清除选中评论的所有分类标签，将它们移回待确认列表。
+async function batchDeleteReviewTags(analysisId, body) {
+  const { reviewIds, tags } = body;
+  if (!reviewIds || !Array.isArray(reviewIds) || reviewIds.length === 0) {
+    throw new Error('请提供至少一条评论 ID。');
+  }
 
-  const tagId = `tag-manual-${randomUUID()}`;
+  const results = await analysisStore.loadResults(analysisId);
+  if (!results) throw new Error('分析结果不存在。');
+
+  // 如果指定了 tags（选择性删除），构建过滤集合
+  const tagFilter = (tags && Array.isArray(tags) && tags.length > 0)
+    ? new Set(tags.map((t) => `${t.dimensionId}::${t.tagId}`))
+    : null;
+
+  const idSet = new Set(reviewIds);
+  let matched = 0;
+  for (const review of (results.reviews || [])) {
+    if (!idSet.has(review.reviewId)) continue;
+    if (tagFilter) {
+      // 选择性删除：只移除匹配的标签
+      const before = review.classifications.length;
+      review.classifications = (review.classifications || []).filter((c) => {
+        const key = `${c.dimensionId}::${c.tagId || c.tagName}`;
+        return !tagFilter.has(key);
+      });
+      if (review.classifications.length < before) matched++;
+      // 如果全部标签被删除，退回待确认
+      if (review.classifications.length === 0) {
+        review.isLowConfidence = true;
+        review.level3 = null;
+      }
+    } else {
+      // 全量删除：清除所有标签
+      review.classifications = [];
+      review.isLowConfidence = true;
+      review.level3 = null;
+      matched++;
+    }
+  }
+
+  const revs = results.reviews || [];
+  const lowCount = revs.filter((r) => r.isLowConfidence).length;
+  const classifiedCount = revs.filter((r) => !r.isLowConfidence && r.classifications.length > 0).length;
+  if (results.summary) {
+    results.summary.lowConfidenceCount = lowCount;
+    results.summary.classifiedCount = classifiedCount;
+  }
+
+  results.dimensionStats = recalcDimensionStats(results.reviews, results.template);
+
+  await analysisStore.saveResults(analysisId, results);
+  await analysisStore.update(analysisId, { summary: results.summary });
+
+  return matched;
+}
+
+// 批量添加标签：向选中评论添加同一标签。
+async function batchAddTagToReviews(analysisId, body) {
+  const { reviewIds, dimensionId, tagName: rawTagName } = body;
+  if (!reviewIds || !Array.isArray(reviewIds) || reviewIds.length === 0) {
+    throw new Error('请提供至少一条评论 ID。');
+  }
+  if (!dimensionId || !rawTagName) throw new Error('请提供 dimensionId 和 tagName。');
+
+  const tagName = cleanTagName(rawTagName);
+  const results = await analysisStore.loadResults(analysisId);
+  if (!results) throw new Error('分析结果不存在。');
+
+  // 先在模板中查找或创建标签
+  const template = results.template;
+  let dim = (template?.dimensions || []).find((d) => d.id === dimensionId || cleanDimName(d.name) === cleanDimName(dimensionId));
+  if (!dim) {
+    dim = { id: dimensionId, name: dimensionId, productMeaning: '', tags: [] };
+    if (template) {
+      if (!template.dimensions) template.dimensions = [];
+      template.dimensions.push(dim);
+    }
+  }
+  let tag = (dim.tags || []).find((t) => cleanTagName(t.name) === tagName);
+  let tagId;
+  if (tag) {
+    tagId = tag.id;
+  } else {
+    tagId = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (!dim.tags) dim.tags = [];
+    dim.tags.push({ id: tagId, name: tagName });
+  }
+
+  // 同步标签到源模板
+  const analysis = analysisStore.get(analysisId);
+  if (analysis && template) {
+    try {
+      await templateStore.update(analysis.templateId, {
+        dimensions: template.dimensions
+      });
+    } catch { /* 模板更新失败不阻塞批量操作 */ }
+  }
+
+  const idSet = new Set(reviewIds);
+  let matched = 0;
+  for (const review of (results.reviews || [])) {
+    if (!idSet.has(review.reviewId)) continue;
+    if (!review.classifications) review.classifications = [];
+    const exists = review.classifications.some(
+      (c) => !c.suggested && c.dimensionId === dimensionId && (c.tagId === tagId || cleanTagName(c.tagName) === tagName)
+    );
+    if (exists) continue;
+    review.classifications.push({
+      dimensionId,
+      dimensionName: dim.name || dimensionId,
+      tagId,
+      tagName,
+      confidence: 1,
+      manuallyAssigned: true
+    });
+    review.isLowConfidence = false;
+    review.level3 = null;
+    matched++;
+  }
+
+  const revs = results.reviews || [];
+  const lowCount = revs.filter((r) => r.isLowConfidence).length;
+  const classifiedCount = revs.filter((r) => !r.isLowConfidence && r.classifications.length > 0).length;
+  if (results.summary) {
+    results.summary.lowConfidenceCount = lowCount;
+    results.summary.classifiedCount = classifiedCount;
+  }
+
+  results.dimensionStats = recalcDimensionStats(results.reviews, results.template);
+
+  await analysisStore.saveResults(analysisId, results);
+  await analysisStore.update(analysisId, { summary: results.summary });
+
+  return { count: matched, dimensionId, tagId, tagName };
+}
+
+// 人工确认时新增标签：同时写入分析结果的模板快照和源模板文件。
+function cleanTagName(name) {
+  return (name || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+}
+
+function cleanDimName(name) {
+  return (name || '').replace(/[（(][^）)]*[）)]\s*$/g, '').trim();
+}
+
+async function addTagToTemplateAndResults(analysisId, body) {
+  const { dimensionId, tagName: rawTagName } = body;
+  if (!dimensionId || !rawTagName) throw new Error('请提供 dimensionId 和 tagName。');
+
+  const tagName = cleanTagName(rawTagName);
 
   const results = await analysisStore.loadResults(analysisId);
   if (!results) throw new Error('分析结果不存在。');
@@ -980,6 +1198,14 @@ async function addTagToTemplateAndResults(analysisId, body) {
   const dim = (results.template?.dimensions || []).find((d) => d.id === dimensionId);
   if (!dim) throw new Error('维度不存在。');
   if (!dim.tags) dim.tags = [];
+
+  // 检查是否已有同名标签（清洗掉 [极性] 前缀后比对）
+  const existing = dim.tags.find((t) => cleanTagName(t.name) === tagName);
+  if (existing) {
+    return { id: existing.id, name: existing.name, dimensionId };
+  }
+
+  const tagId = `tag-manual-${randomUUID()}`;
   dim.tags.push({ id: tagId, name: tagName });
 
   await analysisStore.saveResults(analysisId, results);
@@ -1001,8 +1227,11 @@ async function addTagToTemplateAndResults(analysisId, body) {
 
 // 确认 AI 建议的标签：在模板中创建新标签，并将评论的 suggested 分类转为正式分类。
 async function confirmSuggestedTag(analysisId, body) {
-  const { reviewId, dimensionName, tagName } = body;
-  if (!reviewId || !dimensionName || !tagName) throw new Error('请提供 reviewId、dimensionName 和 tagName。');
+  const { reviewId, dimensionName: rawDimName, tagName: rawTagName } = body;
+  if (!reviewId || !rawDimName || !rawTagName) throw new Error('请提供 reviewId、dimensionName 和 tagName。');
+
+  const dimensionName = cleanDimName(rawDimName);
+  const tagName = cleanTagName(rawTagName);
 
   const results = await analysisStore.loadResults(analysisId);
   if (!results) throw new Error('分析结果不存在。');
@@ -1011,7 +1240,7 @@ async function confirmSuggestedTag(analysisId, body) {
   const template = results.template;
   if (!template) throw new Error('模板快照不存在。');
 
-  let dim = (template.dimensions || []).find((d) => d.name === dimensionName);
+  let dim = (template.dimensions || []).find((d) => cleanDimName(d.name) === dimensionName);
   if (!dim) {
     // 维度也不存在，同时创建维度和标签
     const dimId = `dim-manual-${randomUUID()}`;
@@ -1024,7 +1253,7 @@ async function confirmSuggestedTag(analysisId, body) {
   if (dimensionName === '无意义内容') {
     tagId = '_meaningless';
   } else {
-    const existingTag = (dim.tags || []).find((t) => t.name === tagName);
+    const existingTag = (dim.tags || []).find((t) => cleanTagName(t.name) === tagName);
     if (existingTag) {
       tagId = existingTag.id;
     } else {
@@ -1039,7 +1268,7 @@ async function confirmSuggestedTag(analysisId, body) {
   if (!review) throw new Error('评论不存在。');
 
   for (const c of (review.classifications || [])) {
-    if (c.suggested && c.dimensionName === dimensionName && c.tagName === tagName) {
+    if (c.suggested && cleanDimName(c.dimensionName) === dimensionName && cleanTagName(c.tagName) === tagName) {
       delete c.suggested;
       c.dimensionId = dim.id;
       c.tagId = tagId;
@@ -1093,7 +1322,7 @@ async function ignoreSuggestedTag(analysisId, body) {
 
   // 移除匹配的 suggested 分类
   review.classifications = (review.classifications || []).filter((c) => {
-    if (c.suggested && c.dimensionName === dimensionName && c.tagName === tagName) return false;
+    if (c.suggested && cleanDimName(c.dimensionName) === cleanDimName(dimensionName) && cleanTagName(c.tagName) === cleanTagName(tagName)) return false;
     return true;
   });
 
@@ -1260,6 +1489,102 @@ async function updateReviewClassifications(analysisId, reviewId, body) {
   return { ok: true, review };
 }
 
+// 单条评论 AI 重分类：对单条评论调用 LLM 获取分类建议，返回给前端确认。
+async function reclassifySingleReview(analysisId, reviewId, body) {
+  const analysis = analysisStore.get(analysisId);
+  if (!analysis) throw new Error('分析任务不存在。');
+
+  const results = await analysisStore.loadResults(analysisId);
+  if (!results) throw new Error('分析结果不存在。');
+
+  const review = (results.reviews || []).find((r) => r.reviewId === reviewId);
+  if (!review) throw new Error('评论不存在。');
+
+  const template = results.template;
+  if (!template) throw new Error('模板快照不存在。');
+
+  const apiKey = body.apiKey || analysis.deepseekApiKey;
+  if (!apiKey) throw new Error('未找到 API Key。');
+
+  const providerId = body.providerId || 'deepseek';
+  const model = body.model || analysis.config?.model || 'deepseek-v4-pro';
+  const temperature = body.temperature ?? analysis.config?.temperature ?? 0.1;
+  const maxTokens = body.maxTokens || analysis.config?.maxTokens || 8192;
+
+  const batch = [{
+    reviewId: review.reviewId,
+    starRating: review.starRating || 0,
+    reviewText: review.reviewText || ''
+  }];
+
+  const classified = await analyzeBatch(batch, template, apiKey, model, {
+    temperature,
+    maxTokens,
+    providerId
+  });
+
+  // 返回第一条（也是唯一一条）的分类结果
+  const result = classified[0];
+  if (!result) throw new Error('AI 未返回分类结果。');
+
+  return {
+    reviewId: result.reviewId,
+    classifications: result.classifications || [],
+    level3: result.level3 || null
+  };
+}
+
+// 批量评论 AI 重分类：对多条评论调用 LLM 获取分类建议，返回给前端确认。
+async function batchReclassifyReviews(analysisId, body) {
+  const analysis = analysisStore.get(analysisId);
+  if (!analysis) throw new Error('分析任务不存在。');
+
+  const results = await analysisStore.loadResults(analysisId);
+  if (!results) throw new Error('分析结果不存在。');
+
+  const reviewIds = body.reviewIds;
+  if (!Array.isArray(reviewIds) || reviewIds.length === 0) throw new Error('未提供评论 ID。');
+
+  const template = results.template;
+  if (!template) throw new Error('模板快照不存在。');
+
+  const apiKey = body.apiKey || analysis.deepseekApiKey;
+  if (!apiKey) throw new Error('未找到 API Key。');
+
+  const providerId = body.providerId || 'deepseek';
+  const model = body.model || analysis.config?.model || 'deepseek-v4-pro';
+  const temperature = body.temperature ?? analysis.config?.temperature ?? 0.1;
+  const maxTokens = body.maxTokens || analysis.config?.maxTokens || 8192;
+
+  // 从结果中取出对应评论组成 batch
+  const batch = [];
+  for (const rid of reviewIds) {
+    const review = (results.reviews || []).find((r) => r.reviewId === rid);
+    if (review) {
+      batch.push({
+        reviewId: review.reviewId,
+        starRating: review.starRating || 0,
+        reviewText: review.reviewText || ''
+      });
+    }
+  }
+  if (batch.length === 0) throw new Error('未找到有效的评论。');
+
+  const classified = await analyzeBatch(batch, template, apiKey, model, {
+    temperature,
+    maxTokens,
+    providerId
+  });
+
+  return {
+    results: classified.map((r) => ({
+      reviewId: r.reviewId,
+      classifications: r.classifications || [],
+      level3: r.level3 || null
+    }))
+  };
+}
+
 // 将评论的自定义标签同步到模板维度中。
 async function syncCustomTagsToTemplate(templateId, classifications) {
   const template = await templateStore.get(templateId);
@@ -1287,6 +1612,82 @@ async function syncCustomTagsToTemplate(templateId, classifications) {
     await templateStore.update(templateId, { dimensions: dims });
   }
 }
+// 翻译评论原文：使用 AI 将评论翻译为目标语言，结果写回 analysis results。
+async function runTranslation(analysisId, body) {
+  const {
+    apiKey,
+    providerId = 'deepseek',
+    model = 'deepseek-v4-pro',
+    targetLang = '简体中文',
+    temperature = 0.1,
+    maxTokens = 4096,
+    systemPrompt: customSystemPrompt,
+    scope = 'all',
+    parallelTasks = 3,
+    batchSize = 15,
+    customApiBase
+  } = body;
+
+  if (!apiKey) throw new Error('请提供 API Key。');
+
+  const analysis = analysisStore.get(analysisId);
+  if (!analysis) throw new Error('分析任务不存在。');
+
+  const results = await analysisStore.loadResults(analysisId);
+  if (!results) throw new Error('分析结果不存在。');
+
+  const allReviews = results.reviews || [];
+  if (allReviews.length === 0) throw new Error('没有可翻译的评论。');
+
+  let targetReviews;
+  if (scope === 'lowconfidence') {
+    targetReviews = allReviews.filter((r) => r.isLowConfidence);
+  } else {
+    targetReviews = allReviews.filter((r) => r.reviewText && r.reviewText.trim());
+  }
+
+  if (targetReviews.length === 0) throw new Error('没有需要翻译的评论。');
+
+  const onProgress = (p) => {
+    analysisStore.update(analysisId, {
+      progress: Math.round(10 + (p.completed / p.total) * 90),
+      currentStep: `翻译中 ${Math.round(p.completed / p.total * 100)}%`
+    });
+  };
+
+  const translatedMap = await translateAllReviews({
+    allReviews: targetReviews,
+    apiKey,
+    providerId,
+    model,
+    targetLang,
+    temperature,
+    maxTokens,
+    systemPrompt: customSystemPrompt,
+    parallelTasks,
+    batchSize,
+    customApiBase,
+    onProgress
+  });
+
+  let translatedCount = 0;
+  for (const review of allReviews) {
+    const translated = translatedMap.get(review.reviewId);
+    if (translated) {
+      review.translatedText = translated;
+      translatedCount += 1;
+    }
+  }
+
+  await analysisStore.saveResults(analysisId, results);
+  analysisStore.update(analysisId, {
+    progress: 100,
+    currentStep: `翻译完成：${translatedCount} 条`
+  });
+
+  return { translatedCount, total: targetReviews.length };
+}
+
 
 // 基于手动修正记录，调用 DeepSeek 生成 prompt 优化建议。
 async function generatePromptOptimization(analysisId, body) {

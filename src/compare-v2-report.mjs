@@ -1,4 +1,4 @@
-const DEEPSEEK_API = 'https://api.deepseek.com/v1/chat/completions';
+import { callLLM } from './llm-client.mjs';
 
 // 竞品对比 V2 报告生成器。
 //
@@ -14,7 +14,7 @@ const DEEPSEEK_API = 'https://api.deepseek.com/v1/chat/completions';
 //   csvDataMap        Map<analysisId, csvContent> 用户上传的高赞评论 CSV
 //   apiKey            DeepSeek API Key（从分析任务中读取）
 
-export async function buildCompareV2Report({ analysisIds, analysisStore, downloadStore, csvDataMap, apiKey }) {
+export async function buildCompareV2Report({ analysisIds, analysisStore, downloadStore, csvDataMap, apiKey, providerId = 'deepseek', model = 'deepseek-v4-pro' }) {
   // ===== 前置校验 =====
   if (!Array.isArray(analysisIds) || analysisIds.length < 2) {
     throw new Error('请至少选择 2 个已完成的解析任务进行对比。');
@@ -129,7 +129,7 @@ export async function buildCompareV2Report({ analysisIds, analysisStore, downloa
     appData.topDataReviewCount = topReviews.length;
 
     try {
-      const annotated = await analyzeTopReviewsSentiment(topReviews, apiKey);
+      const annotated = await analyzeTopReviewsSentiment(topReviews, apiKey, providerId, model);
       appData.topReviews = annotated;
     } catch (error) {
       appData.topReviews = topReviews.map((r) => ({
@@ -146,7 +146,7 @@ export async function buildCompareV2Report({ analysisIds, analysisStore, downloa
   // ===== 阶段 3：V2 洞察报告（DeepSeek 生成叙述） =====
   let insightResult = null;
   try {
-    insightResult = await generateInsights(appsPreAgg, template, apiKey);
+    insightResult = await generateInsights(appsPreAgg, template, apiKey, providerId, model);
   } catch (error) {
     insightResult = {
       error: error.message,
@@ -300,7 +300,7 @@ function parseStarRating(str) {
 
 // ===== 阶段 2：高赞评论情感标记 =====
 
-async function analyzeTopReviewsSentiment(reviews, apiKey) {
+async function analyzeTopReviewsSentiment(reviews, apiKey, providerId, model) {
   if (reviews.length === 0) return [];
 
   const systemPrompt = `你是用户评论情感分析助手。请对以下高赞评论进行片段级情感标注。
@@ -383,7 +383,7 @@ function escapeHtmlKeepTags(text) {
 
 // ===== 阶段 3：V2 洞察报告 =====
 
-async function generateInsights(apps, template, apiKey) {
+async function generateInsights(apps, template, apiKey, providerId, model) {
   const systemPrompt = '你是资深产品分析师，擅长从用户评论分类数据中提炼产品洞察。请只输出 JSON，不要其他文字。';
 
   const dimsDesc = (template.dimensions || []).map((dim) => {
@@ -448,51 +448,8 @@ ${appSections}
 - 所有叙述用中文，简洁具体
 - 只输出 JSON`;
 
-  const content = await callDeepSeek(systemPrompt, userPrompt, apiKey);
+  const content = await callLLM({ providerId, apiKey, model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], temperature: 0.3, maxTokens: 4096, retries: 2 });
   return parseJsonResponse(content, 'V2 洞察报告');
-}
-
-// ===== DeepSeek API 调用 =====
-
-async function callDeepSeek(systemPrompt, userPrompt, apiKey, retries = 2) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch(DEEPSEEK_API, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: 'deepseek-chat',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.3,
-          max_tokens: 4096
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          throw new Error(`DeepSeek API 请求被拒绝 (HTTP ${response.status})：${errorText.slice(0, 300)}`);
-        }
-        throw new Error(`DeepSeek API HTTP ${response.status}：${errorText.slice(0, 200)}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
-      if (!content) {
-        throw new Error('DeepSeek 返回了空响应内容。');
-      }
-      return content;
-    } catch (error) {
-      if (attempt === retries) throw error;
-      await sleep(Math.pow(2, attempt) * 2000);
-    }
-  }
 }
 
 function parseJsonResponse(content, label) {
@@ -523,6 +480,3 @@ function parseJsonResponse(content, label) {
   return result;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

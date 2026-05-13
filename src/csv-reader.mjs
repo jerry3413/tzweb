@@ -104,7 +104,7 @@ export async function mergeCSVFiles(filePaths) {
 
 // CSV 行解析：处理引号转义、逗号分隔。
 // 不引入第三方 CSV 库，保持零依赖。
-function parseCSVLines(text) {
+export function parseCSVLines(text) {
   const lines = [];
   let current = [];
   let field = '';

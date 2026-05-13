@@ -111,7 +111,7 @@ export class TemplateStore {
     }
 
     // 不允许通过 update 修改 isBuiltIn 和 id
-    const allowed = ['name', 'category', 'description', 'dimensions'];
+    const allowed = ['name', 'category', 'description', 'dimensions', 'mode'];
     for (const key of Object.keys(patch)) {
       if (allowed.includes(key)) {
         template[key] = patch[key];

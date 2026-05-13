@@ -2,22 +2,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mergeCSVFiles } from './csv-reader.mjs';
+import { callLLM } from './llm-client.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROMPT_VERSIONS_FILE = path.join(__dirname, '..', 'data', 'prompts', 'system-prompt-versions.json');
 
-// DeepSeek 客户端：将下载好的评论按模板维度进行 AI 语义分类。
-//
-// 核心流程：
-//   1. 读取并合并 CSV → 去重评论列表
-//   2. 按 ~100 条/批 拆分评论
-//   3. 控制并发（默认 20 路）逐批调用 DeepSeek API
-//   4. 汇总分类结果并计算维度/标签统计
-//
-// 每条评论可能命中多个维度和多个标签，每个标签分配 0-1 的置信度。
-// 所有分类的置信度均低于阈值的评论会被标记为"低置信度"（isLowConfidence），供后续人工确认。
-
-const DEEPSEEK_API = 'https://api.deepseek.com/v1/chat/completions';
+const LEVEL3_VALUES = ['bug', '需求/建议', '不会操作', '与程序无关', '吐槽'];
 
 // 启动一次完整的评论解析任务。
 // options 参数说明见下方。
@@ -27,9 +17,11 @@ export async function runReviewAnalysis(options) {
     template,
     csvFilePaths,
     apiKey,
-    model = 'deepseek-chat',
+    providerId = 'deepseek',
+    model = 'deepseek-v4-pro',
     confidenceThreshold = 0.6,
     parallelTasks = 20,
+    maxReviewsPerBatch = 0,
     temperature = 0.1,
     maxTokens = 8192,
     systemPrompt: customSystemPrompt,
@@ -86,13 +78,14 @@ export async function runReviewAnalysis(options) {
   });
 
   // ===== 阶段 3：拆分为批次（仅有效评论） =====
-  const batchSize = Math.max(1, Math.ceil(meaningfulReviews.length / Math.max(1, Math.ceil(meaningfulReviews.length / 100))));
+  const autoBatchSize = Math.max(1, Math.ceil(meaningfulReviews.length / Math.max(1, Math.ceil(meaningfulReviews.length / 100))));
+  const batchSize = maxReviewsPerBatch > 0 ? Math.min(maxReviewsPerBatch, meaningfulReviews.length) : autoBatchSize;
   const batches = splitIntoBatches(meaningfulReviews, batchSize);
   const actualConcurrency = Math.min(parallelTasks, batches.length || 1);
 
   onProgress({
     progress: 10,
-    currentStep: 'Starting DeepSeek analysis',
+    currentStep: 'Starting AI analysis',
     totalBatches: batches.length,
     batchSize,
     prefiltered: meaninglessReviews.length
@@ -106,7 +99,7 @@ export async function runReviewAnalysis(options) {
   if (batches.length > 0) {
     await runWithConcurrency(batches, actualConcurrency, async (batch, batchIndex) => {
       try {
-        const results = await analyzeBatch(batch, template, apiKey, model, { temperature, maxTokens, systemPrompt: customSystemPrompt, userPromptTemplate: customUserPromptTemplate, promptVersion });
+        const results = await analyzeBatch(batch, template, apiKey, model, { temperature, maxTokens, systemPrompt: customSystemPrompt, userPromptTemplate: customUserPromptTemplate, promptVersion, providerId });
         classifiedReviews.push(...results);
       } catch (error) {
         errors.push({ batchIndex, count: batch.length, error: error.message });
@@ -226,54 +219,30 @@ async function runWithConcurrency(items, limit, fn) {
 
 // 调用 DeepSeek API 分析单批评论。
 // 构造 system + user prompt，让 DeepSeek 按模板进行语义分类。
-async function analyzeBatch(batch, template, apiKey, model, promptOptions = {}, retries = 3) {
-  const { temperature = 0.1, maxTokens = 8192, systemPrompt: customSystemPrompt, userPromptTemplate, promptVersion } = promptOptions;
-  const systemPrompt = customSystemPrompt || buildSystemPrompt(template, promptVersion);
+export async function analyzeBatch(batch, template, apiKey, model, promptOptions = {}) {
+  const { temperature = 0.1, maxTokens = 8192, systemPrompt: customSystemPrompt, userPromptTemplate, promptVersion, providerId } = promptOptions;
+  let systemPrompt = customSystemPrompt || buildSystemPrompt(template, promptVersion);
+  // 体征list模式：自定义 prompt 会绕过 buildSystemPrompt 中的注入逻辑，这里兜底
+  if (template.mode === '体征list') {
+    systemPrompt = injectLevel3ToPrompt(systemPrompt);
+  }
   const userPrompt = userPromptTemplate
     ? userPromptTemplate.replace('__BATCH_SIZE__', String(batch.length)).replace('__REVIEWS_JSON__', JSON.stringify(batch.map((review, idx) => ({ index: idx, starRating: review.starRating || 0, text: review.reviewText || '' })), null, 2))
     : buildUserPrompt(batch);
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch(DEEPSEEK_API, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature,
-          max_tokens: maxTokens
-        })
-      });
+  const content = await callLLM({
+    providerId,
+    apiKey,
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ],
+    temperature,
+    maxTokens
+  });
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        // 4xx 错误（非 429）不重试，直接抛出
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          throw new Error(`DeepSeek API 请求被拒绝 (HTTP ${response.status})：${errorText.slice(0, 300)}`);
-        }
-        throw new Error(`DeepSeek API HTTP ${response.status}：${errorText.slice(0, 200)}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content;
-      if (!content) {
-        throw new Error('DeepSeek 返回了空响应内容。');
-      }
-
-      return parseClassificationResponse(content, batch, template);
-    } catch (error) {
-      if (attempt === retries) throw error;
-      // 指数退避：1s → 2s → 4s
-      await sleep(Math.pow(2, attempt) * 1000);
-    }
-  }
+  return parseClassificationResponse(content, batch, template);
 }
 
 // 构造 System Prompt：定义角色、模板结构、输出格式。
@@ -293,6 +262,27 @@ function generateDimensionsDesc(template) {
   }).filter(Boolean).join("\n");
 }
 
+// 体征list模式：向 system prompt 注入 3 级分类规则和更新后的输出格式。
+// 如果 prompt 已有 level3 规则则跳过，避免重复注入。
+function injectLevel3ToPrompt(prompt) {
+  if (prompt.includes('3级分类')) return prompt;
+  const level3Rules = `
+10. **3级分类（仅体征list模式）**：对每条评论额外输出一个可选的 level3 字段，从以下 5 个固定类别中选择最匹配的一个。评论不明确属于任何类别则设为 null：
+   - **需求/建议**：用户提出对 APP 有帮助的具体改变方向，包括新增、支持、优化、减少、取消、恢复、配置某能力。也包括明确的隐性需求——用户指出某个具体能力缺失、不支持、无法设置、没有某语言/主题/格式/尺寸/导入来源/导出能力。
+   - **吐槽**：用户表达不满、抱怨、负面评价、价格/广告/订阅/体验不爽，但没有提出明确可执行的改变方向。不要把普通负面反馈自动推导成需求/建议。
+   - **bug**：用户描述已有功能异常、失败、报错、崩溃、卡死、结果错误、文件打不开、保存失败、导入失败、转换失败。判断重点：功能本应可用，但没有按预期工作。
+   - **不会操作**：用户不知道怎么用、找不到入口、不理解流程、询问如何操作或误解使用方式。如果评论明确表达某能力不存在或不支持，优先判为需求/建议。
+   - **与程序无关**：评论无法归因到 APP 功能、体验、BUG、需求、广告、订阅、价格、语言、UI 或操作问题。
+
+输出格式中每条评论增加 "level3" 字段：值必须为 "bug"/"需求/建议"/"不会操作"/"与程序无关"/"吐槽" 或 null。
+示例：[{"reviewIndex": 0, "classifications": [...], "suggestions": [...], "level3": "bug"}, {"reviewIndex": 1, "classifications": [], "suggestions": [], "level3": null}]`;
+  // 如果存在 ## 输出格式 锚点，注入到它之前；否则追加到末尾
+  if (prompt.includes('## 输出格式')) {
+    return prompt.replace('## 输出格式', level3Rules + '\n\n## 输出格式');
+  }
+  return prompt + '\n' + level3Rules;
+}
+
 // 从版本文件中加载指定版本的 prompt 模板。
 // 返回 promptTemplate 字符串（含 ${dimensionsDesc} 占位符），若版本不存在返回 null。
 function loadPromptTemplate(version) {
@@ -310,10 +300,11 @@ function loadPromptTemplate(version) {
 function buildSystemPrompt(template, version) {
   const dimensionsDesc = generateDimensionsDesc(template);
   const promptTemplate = loadPromptTemplate(version);
+  let prompt;
   if (promptTemplate) {
-    return promptTemplate.replace("${dimensionsDesc}", dimensionsDesc);
-  }
-  return `你是一个专业的 APP 用户评论分析助手。请根据以下模板维度与标签，对每条评论进行语义理解和分类。
+    prompt = promptTemplate.replace("${dimensionsDesc}", dimensionsDesc);
+  } else {
+    prompt = `你是一个专业的 APP 用户评论分析助手。请根据以下模板维度与标签，对每条评论进行语义理解和分类。
 
 ## 分类规则
 1. 一条评论可以同时匹配多个维度和多个标签。只要评论内容涉及该维度/标签，就应该标记。
@@ -362,6 +353,11 @@ ${dimensionsDesc}
 ## 输出格式
 请严格按以下 JSON 数组格式输出：
 [{"reviewIndex": 0, "classifications": [{"dimension": "维度名称", "tag": "标签名称", "confidence": 0.85, "note": "具体内容（可选）"}], "suggestions": [{"description": "用户建议的一句话描述", "category": "功能/UI"}]}, {"reviewIndex": 1, "classifications": [], "suggestions": []}]`;
+  }
+  if (template.mode === '体征list') {
+    prompt = injectLevel3ToPrompt(prompt);
+  }
+  return prompt;
 }
 
 // 构造 User Prompt：传入待分析的评论批次。
@@ -373,6 +369,13 @@ function buildUserPrompt(batch) {
   }));
 
   return `以下是需要分类的 ${batch.length} 条评论（每条包含 index、starRating 和 text）：\n\n${JSON.stringify(reviews, null, 2)}\n\n请输出分类结果 JSON 数组：`;
+}
+
+// 校验 level3 字段值是否合法。返回合法值或 null。
+function validateLevel3(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'string' && LEVEL3_VALUES.includes(value.trim())) return value.trim();
+  return null;
 }
 
 // 解析 DeepSeek 返回的分类 JSON。
@@ -396,15 +399,15 @@ function parseClassificationResponse(content, batch, template) {
       try {
         classifications = JSON.parse(arrayMatch[0]);
       } catch {
-        throw new Error(`DeepSeek 返回内容无法解析为 JSON。原始响应前 300 字符：${content.slice(0, 300)}`);
+        throw new Error(`AI 返回内容无法解析为 JSON。原始响应前 300 字符：${content.slice(0, 300)}`);
       }
     } else {
-      throw new Error(`DeepSeek 返回内容无法解析为 JSON。原始响应前 300 字符：${content.slice(0, 300)}`);
+      throw new Error(`AI 返回内容无法解析为 JSON。原始响应前 300 字符：${content.slice(0, 300)}`);
     }
   }
 
   if (!Array.isArray(classifications)) {
-    throw new Error('DeepSeek 返回的 JSON 不是数组格式。');
+    throw new Error('AI 返回的 JSON 不是数组格式。');
   }
 
   // 将 DeepSeek 返回的 reviewIndex 映射回实际评论
@@ -457,7 +460,8 @@ function parseClassificationResponse(content, batch, template) {
     result.push({
       ...review,
       classifications: mapped,
-      isLowConfidence: hasSuggestions
+      isLowConfidence: hasSuggestions,
+      level3: validateLevel3(item.level3)
     });
   }
 
@@ -468,7 +472,8 @@ function parseClassificationResponse(content, batch, template) {
       result.push({
         ...batch[i],
         classifications: [],
-        isLowConfidence: false // 待后续按阈值判断
+        isLowConfidence: false, // 待后续按阈值判断
+        level3: null
       });
     }
   }
