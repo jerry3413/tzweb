@@ -214,10 +214,19 @@ h2 {
   letter-spacing: 0;
 }
 
-.section-title p,
-.fine-print {
+.section-title p {
   color: var(--muted);
   margin-top: 8px;
+}
+
+/* 内联备注文字（标签内的辅助说明） */
+.field span .fine-print {
+  font-size: 11px;
+  font-weight: 400;
+  border: none;
+  padding: 0;
+  background: none;
+  color: var(--muted);
 }
 
 .service-row {
@@ -316,7 +325,7 @@ h2 {
 }
 
 .field.full {
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }
 
 .field span {
@@ -349,7 +358,7 @@ h2 {
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
 .primary-button,
@@ -405,11 +414,11 @@ h2 {
 }
 
 .fine-print {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px dashed var(--line);
   border-radius: 8px;
   background: #fff9e8;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 
@@ -725,17 +734,6 @@ tbody tr:hover td {
 .tag-row .tag-name-input {
   width: 130px;
   flex-shrink: 0;
-}
-
-.tag-row .tag-polarity-select {
-  height: 30px;
-  width: 72px;
-  flex-shrink: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0 4px;
-  font-size: 12px;
-  background: #fff;
 }
 
 .tag-row .tag-meaning-input {
@@ -1980,6 +1978,98 @@ mark.dislike {
   padding: 20px;
 }
 
+.modal--wide {
+  max-width: 960px;
+}
+
+/* Prompt 版本管理：左右两栏布局 */
+.prompt-manager-body {
+  display: flex;
+  gap: 0;
+  padding: 0;
+  min-height: 440px;
+}
+
+.prompt-manager-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.prompt-manager-editor {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.prompt-version-list .version-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-bottom: 2px;
+  transition: background 0.15s;
+}
+
+.prompt-version-list .version-item:hover {
+  background: var(--bg);
+}
+
+.prompt-version-list .version-item.active {
+  background: var(--blue);
+  color: #fff;
+}
+
+.prompt-version-list .version-item .version-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--muted);
+  margin-left: 6px;
+}
+
+.prompt-version-list .version-item.active .version-badge {
+  background: rgba(255,255,255,0.25);
+  color: #fff;
+}
+
+/* 文字链接按钮 */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: inherit;
+}
+.link-button:hover { opacity: 0.8; }
+
+/* Toast 提示 */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  z-index: 10000;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+}
+.toast--visible { opacity: 1; transform: translateY(0); }
+.toast-success { background: var(--green, #22c55e); }
+.toast-error { background: var(--red, #ef4444); }
+
 .opt-summary {
   background: var(--bg);
   padding: 10px 14px;
@@ -2002,7 +2092,7 @@ mark.dislike {
   word-break: break-word;
 }
 
-/* 3级分类徽章（体征list模式） */
+/* 3级分类徽章 */
 .level3-badge {
   display: inline-block;
   font-size: 11px;

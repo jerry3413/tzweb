@@ -60,7 +60,8 @@ export async function runReviewAnalysis(options) {
           dimensionName: MEANINGLESS_DIM,
           tagId: MEANINGLESS_ID,
           tagName: '无意义',
-          confidence: 1
+          confidence: 1,
+          polarity: '中性'
         }],
         isLowConfidence: true
       });
@@ -222,10 +223,7 @@ async function runWithConcurrency(items, limit, fn) {
 export async function analyzeBatch(batch, template, apiKey, model, promptOptions = {}) {
   const { temperature = 0.1, maxTokens = 8192, systemPrompt: customSystemPrompt, userPromptTemplate, promptVersion, providerId } = promptOptions;
   let systemPrompt = customSystemPrompt || buildSystemPrompt(template, promptVersion);
-  // 体征list模式：自定义 prompt 会绕过 buildSystemPrompt 中的注入逻辑，这里兜底
-  if (template.mode === '体征list') {
-    systemPrompt = injectLevel3ToPrompt(systemPrompt);
-  }
+  systemPrompt = injectLevel3ToPrompt(systemPrompt);
   const userPrompt = userPromptTemplate
     ? userPromptTemplate.replace('__BATCH_SIZE__', String(batch.length)).replace('__REVIEWS_JSON__', JSON.stringify(batch.map((review, idx) => ({ index: idx, starRating: review.starRating || 0, text: review.reviewText || '' })), null, 2))
     : buildUserPrompt(batch);
@@ -254,20 +252,19 @@ function generateDimensionsDesc(template) {
     const validTags = (dim.tags || []).filter((tag) => tag.id && tag.name);
     if (validTags.length === 0) return '';
     const tagsDesc = validTags.map((tag) => {
-      const polarity = tag.polarity ? `[${tag.polarity}] ` : "";
       const meaning = tag.productMeaning ? ` — ${tag.productMeaning}` : "";
-      return `  ${polarity}"${tag.name}"${meaning}`;
+      return `  "${tag.name}"${meaning}`;
     }).join("\n");
     return `- ${dim.name}（${dim.productMeaning || ""}）：\n${tagsDesc}`;
   }).filter(Boolean).join("\n");
 }
 
-// 体征list模式：向 system prompt 注入 3 级分类规则和更新后的输出格式。
+// 向 system prompt 注入 3 级分类规则和更新后的输出格式。
 // 如果 prompt 已有 level3 规则则跳过，避免重复注入。
 function injectLevel3ToPrompt(prompt) {
   if (prompt.includes('3级分类')) return prompt;
   const level3Rules = `
-10. **3级分类（仅体征list模式）**：对每条评论额外输出一个可选的 level3 字段，从以下 5 个固定类别中选择最匹配的一个。评论不明确属于任何类别则设为 null：
+10. **3级分类**：对每条评论额外输出一个可选的 level3 字段，从以下 5 个固定类别中选择最匹配的一个。评论不明确属于任何类别则设为 null：
    - **需求/建议**：用户提出对 APP 有帮助的具体改变方向，包括新增、支持、优化、减少、取消、恢复、配置某能力。也包括明确的隐性需求——用户指出某个具体能力缺失、不支持、无法设置、没有某语言/主题/格式/尺寸/导入来源/导出能力。
    - **吐槽**：用户表达不满、抱怨、负面评价、价格/广告/订阅/体验不爽，但没有提出明确可执行的改变方向。不要把普通负面反馈自动推导成需求/建议。
    - **bug**：用户描述已有功能异常、失败、报错、崩溃、卡死、结果错误、文件打不开、保存失败、导入失败、转换失败。判断重点：功能本应可用，但没有按预期工作。
@@ -275,7 +272,7 @@ function injectLevel3ToPrompt(prompt) {
    - **与程序无关**：评论无法归因到 APP 功能、体验、BUG、需求、广告、订阅、价格、语言、UI 或操作问题。
 
 输出格式中每条评论增加 "level3" 字段：值必须为 "bug"/"需求/建议"/"不会操作"/"与程序无关"/"吐槽" 或 null。
-示例：[{"reviewIndex": 0, "classifications": [...], "suggestions": [...], "level3": "bug"}, {"reviewIndex": 1, "classifications": [], "suggestions": [], "level3": null}]`;
+示例：[{"reviewIndex": 0, "classifications": [{"dimension": "...", "tag": "...", "polarity": "负向", "confidence": 0.85}], "suggestions": [...], "level3": "bug"}, {"reviewIndex": 1, "classifications": [], "suggestions": [], "level3": null}]`;
   // 如果存在 ## 输出格式 锚点，注入到它之前；否则追加到末尾
   if (prompt.includes('## 输出格式')) {
     return prompt.replace('## 输出格式', level3Rules + '\n\n## 输出格式');
@@ -316,24 +313,21 @@ function buildSystemPrompt(template, version) {
 3. **无意义内容跳过**：对于无实质内容的评论（纯情绪表达如 "very good"/"good"/"bad"、乱码、纯表情、刷评灌水、与APP无关内容等），不要强行匹配任何维度/标签，直接返回空的 classifications 数组。
 4. 如果评论内容与任何维度/标签都不相关，也返回空的 classifications 数组。
 5. **重要**：只输出 JSON 数组，不要输出其他文字、解释或 markdown 代码块标记。
-6. **note 补充信息**：按标签极性分级要求。
-	   **需求标签（必填 note）**：评论命中需求标签时，note 必须填写用户具体建议的功能或改进点（如"please add dark mode" → "增加深色模式"），不能留空。
-	   **正向/负向标签（有细节就填）**：只有评论包含标签名之外的具体细节时才填。
-		   - 正向：用户具体喜欢什么？（如"converts 50 pages in 3 seconds" + "转换速度快" → "50页3秒转完"）
-		   - 负向：用户具体抱怨什么？（如"full screen ad every time I click convert" + "广告多" → "每次点转换都弹全屏广告"）
-	   **中性标签（选填）**：用户的具体场景或动机，有就填（如"using this to scan my ID for exam submission" + "办公/学习场景" → "扫描证件提交考试"）。
-	   **禁止填 note**：评论内容已被标签名完全覆盖，无额外信息。如"too many ads"+广告多、"very good app"+满意/好评、"crashes every time"+闪退/崩溃、"waste of money"+付费不满，这些情况 note 留空。复述标签名也留空。判断标准：note 和标签名表达的是同一件事就留空。
-	7. **suggestions 用户建议提取（每条评论独立判断）**：
-	   对每条评论，如果用户表达了以下任一内容，提取到 suggestions 数组：
-	   - 明确的功能需求（"please add dark mode", "need batch convert"）
-	   - 隐含的改进诉求（"too slow" → "优化转换速度"）
-	   - 与其他 App 对比后提出的期望（"like Adobe does" → "对标 Adobe 的功能"）
-	   - 对现有功能的改进意见（"crop feature is hard to use" → "改进裁剪交互"）
-	   suggestions 数组中每个元素格式：
-	   { "description": "用户具体建议的一句话描述（中文，简洁）", "category": "功能/UI" 或 "性能" 或 "内容" 或 "服务" 或 "付费" 或 "广告" 或 "其他" }
-	   如果评论没有表达任何建议/需求，suggestions 为空数组 []。
-	   注意：suggestions 与 classifications 中的需求标签互补。需求标签关注用户需求类别，suggestions 关注用户提出的具体改进点。
+6. **polarity 向性判断**：对每条分类输出 polarity 字段，值为 "正向"/"负向"/"中性"/"需求" 之一。根据评论实际表达的语气判断，不受标签名称暗示。
+   - 正向：评论对该维度/标签持肯定、满意、喜爱态度
+   - 负向：评论对该维度/标签持不满、抱怨、批评态度
+   - 中性：评论客观陈述事实，无明显情感倾向
+   - 需求：评论表达希望新增/改进某功能的诉求
 
+7. **note 补充信息（按向性分级）**：
+   **需求向性（必填 note）**：polarity 为"需求"时，note 必须填写用户具体建议的功能或改进点（如"please add dark mode" → "增加深色模式"），不能留空。
+   **正向/负向向性（有细节就填）**：只有评论包含标签名之外的具体细节时才填。
+     - 正向：用户具体喜欢什么？（如"converts 50 pages in 3 seconds" + "转换速度快" → "50页3秒转完"）
+     - 负向：用户具体抱怨什么？（如"full screen ad every time I click convert" + "广告多" → "每次点转换都弹全屏广告"）
+   **中性向性（选填）**：用户的具体场景或动机，有就填（如"using this to scan my ID for exam submission" + "办公/学习场景" → "扫描证件提交考试"）。
+   **禁止填 note**：评论内容已被标签名完全覆盖，无额外信息。如"too many ads"+广告多、"very good app"+满意/好评、"crashes every time"+闪退/崩溃、"waste of money"+付费不满，这些情况 note 留空。复述标签名也留空。判断标准：note 和标签名表达的是同一件事就留空。
+
+8. **suggestions 用户建议提取（每条评论独立判断）**：
 8. **维度区分指南**：当一条评论可能同时命中"功能完整性"和"功能质量"两个维度时，按以下标准区分：
    - 功能完整性：关注"功能是否存在、链路是否通畅"（有没有这个能力、能不能走完流程）
    - 功能质量：关注"功能执行完成后的结果好坏"（输出清不清晰、排版对不对、比例是否正常）
@@ -352,11 +346,9 @@ ${dimensionsDesc}
 
 ## 输出格式
 请严格按以下 JSON 数组格式输出：
-[{"reviewIndex": 0, "classifications": [{"dimension": "维度名称", "tag": "标签名称", "confidence": 0.85, "note": "具体内容（可选）"}], "suggestions": [{"description": "用户建议的一句话描述", "category": "功能/UI"}]}, {"reviewIndex": 1, "classifications": [], "suggestions": []}]`;
+[{"reviewIndex": 0, "classifications": [{"dimension": "维度名称", "tag": "标签名称", "polarity": "负向", "confidence": 0.85, "note": "具体内容（可选）"}], "suggestions": [{"description": "用户建议的一句话描述", "category": "功能/UI"}]}, {"reviewIndex": 1, "classifications": [], "suggestions": []}]`;
   }
-  if (template.mode === '体征list') {
-    prompt = injectLevel3ToPrompt(prompt);
-  }
+  prompt = injectLevel3ToPrompt(prompt);
   return prompt;
 }
 
@@ -376,6 +368,16 @@ function validateLevel3(value) {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'string' && LEVEL3_VALUES.includes(value.trim())) return value.trim();
   return null;
+}
+
+const VALID_POLARITIES = ['正向', '负向', '中性', '需求'];
+
+function validatePolarity(value) {
+  if (typeof value === 'string' && VALID_POLARITIES.includes(value.trim())) return value.trim();
+  if (value && typeof value === 'string') {
+    console.warn(`[deepseek-client] Unexpected polarity value: "${value}", expected one of ${VALID_POLARITIES.join(', ')}`);
+  }
+  return '';
 }
 
 // 解析 DeepSeek 返回的分类 JSON。
@@ -438,7 +440,8 @@ function parseClassificationResponse(content, batch, template) {
           dimensionName: MEANINGLESS_DIM,
           tagId: MEANINGLESS_ID,
           tagName: '无意义',
-          confidence: typeof c.confidence === 'number' ? c.confidence : 0.5
+          confidence: typeof c.confidence === 'number' ? c.confidence : 0.5,
+          polarity: '中性'
         };
       }
       const dimId = dimNameToId.get(c.dimension) || '';
@@ -450,6 +453,7 @@ function parseClassificationResponse(content, batch, template) {
         dimensionName: c.dimension || '',
         tagId: tagId,
         tagName: c.tag || '',
+        polarity: validatePolarity(c.polarity),
         confidence: typeof c.confidence === 'number' ? c.confidence : 0.5,
         suggested: isSuggested || undefined
       };

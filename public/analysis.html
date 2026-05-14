@@ -89,13 +89,6 @@
               <span>描述</span>
               <input id="templateDescription" type="text" placeholder="简要描述模板的适用场景">
             </label>
-            <label class="field full">
-              <span>模板模式</span>
-              <select id="templateMode">
-                <option value="">标准（默认）</option>
-                <option value="体征list">体征list</option>
-              </select>
-            </label>
             <div id="dimensionsEditor" class="dimensions-editor"></div>
             <button id="addDimensionBtn" class="secondary-button" type="button">+ 添加维度</button>
             <div style="margin-top: 16px; display: flex; gap: 10px;">
@@ -117,13 +110,13 @@
             </div>
 
             <!-- 数据源选择 -->
-            <div class="results-tabs" id="dataSourceTabs" style="margin-bottom: 14px;">
+            <div class="results-tabs" id="dataSourceTabs" style="margin-bottom: 18px;">
               <button class="results-tab active" data-source="downloaded">已下载 App</button>
               <button class="results-tab" data-source="custom">自定义上传</button>
             </div>
 
             <!-- 已下载 App 面板 -->
-            <div id="downloadedSourcePanel">
+            <div id="downloadedSourcePanel" style="margin-bottom: 18px;">
               <label class="field">
                 <span>目标 App</span>
                 <div class="custom-select" id="appSelectWrapper">
@@ -136,7 +129,7 @@
             </div>
 
             <!-- 自定义上传面板 -->
-            <div id="customSourcePanel" hidden>
+            <div id="customSourcePanel" hidden style="margin-bottom: 18px;">
               <label class="field full">
                 <span>App 名称</span>
                 <input id="customAppName" type="text" placeholder="输入 App 名称（用于结果列表标识）">
@@ -170,16 +163,16 @@
               </label>
             </div>
 
-            <label class="field full" style="margin-top: 14px;">
+            <label class="field full" style="margin-top: 18px;">
               <span>API Key</span>
               <input id="apiKeyInput" type="password" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
             </label>
 
             <!-- 高级 Prompt 设置（可折叠） -->
-            <div style="margin-top: 14px;">
+            <div style="margin-top: 18px;">
               <button id="toggleAdvancedBtn" class="secondary-button" type="button" style="font-size: 13px;">展开高级 Prompt 设置</button>
             </div>
-            <div id="advancedSettings" style="display: none; margin-top: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fffefa;">
+            <div id="advancedSettings" style="display: none; margin-top: 18px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: #fffefa;">
               <div class="form-grid">
                 <label class="field">
                   <span>AI 提供商</span>
@@ -208,7 +201,7 @@
                   <input id="temperatureInput" type="number" value="0.1" min="0" max="2" step="0.1">
                 </label>
               </div>
-              <div class="form-grid" style="margin-top: 14px; margin-bottom: 10px;">
+              <div class="form-grid" style="margin-top: 18px; margin-bottom: 18px;">
                 <label class="field">
                   <span>Max Tokens</span>
                   <input id="maxTokensInput" type="number" value="8192" min="100" max="32768" step="100">
@@ -222,18 +215,14 @@
                   <input id="maxReviewsPerBatchInput" type="number" value="20" min="1" max="200" step="1">
                 </label>
               </div>
-              <div class="form-grid" style="margin-bottom: 10px;">
+              <div class="form-grid" style="margin-bottom: 18px; align-items: end;">
                 <label class="field">
-                  <span>Prompt 版本</span>
+                  <span>Prompt 版本 <button id="managePromptsBtn" class="link-button" type="button" style="font-size: 12px; font-weight: normal; margin-left: 4px;">管理</button></span>
                   <select id="promptVersionSelect">
                     <option value="">加载中...</option>
                   </select>
                 </label>
               </div>
-              <label class="field full">
-                <span>System Prompt <span class="fine-print" style="display: inline; padding: 0; border: none; background: none; font-weight: 400;">（根据所选模板自动生成，可编辑）</span></span>
-                <textarea id="systemPromptInput" rows="10" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;"></textarea>
-              </label>
               <label class="field full">
                 <span>User Prompt 模板</span>
                 <textarea id="userPromptInput" rows="6" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;"></textarea>
@@ -346,8 +335,8 @@
                 <option value="">全部</option>
                 <option value="yes">有备注</option>
               </select>
-              <span style="font-weight: 900; font-size: 13px;" id="filterLevel3Label" hidden>3级分类：</span>
-              <select id="filterLevel3" style="height: 34px; border: 1px solid var(--line-dark); border-radius: 8px; padding: 0 10px;" hidden>
+              <span style="font-weight: 900; font-size: 13px;" id="filterLevel3Label">3级分类：</span>
+              <select id="filterLevel3" style="height: 34px; border: 1px solid var(--line-dark); border-radius: 8px; padding: 0 10px;">
                 <option value="">全部</option>
                 <option value="bug">bug</option>
                 <option value="需求/建议">需求/建议</option>
@@ -505,7 +494,7 @@
                 </label>
               </div>
               <label class="field full" style="margin-bottom: 14px;">
-                <span>翻译 Prompt <span class="fine-print" style="display: inline; padding: 0; border: none; background: none; font-weight: 400;">（可自定义）</span></span>
+                <span>翻译 Prompt <span class="fine-print">（可自定义）</span></span>
                 <textarea id="translateSystemPrompt" rows="8" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;"></textarea>
               </label>
               <div style="display: flex; gap: 10px; align-items: center;">
@@ -633,6 +622,26 @@
         </div>
       </main>
     </div>
+
+    <!-- Prompt 版本管理弹窗 -->
+    <div id="promptManagerModal" class="modal-overlay" hidden>
+      <div class="modal-container modal--wide">
+        <div class="modal-header">
+          <h3>System Prompt 版本管理</h3>
+          <button class="modal-close-btn" id="promptManagerCloseBtn" type="button">&times;</button>
+        </div>
+        <div class="modal-body prompt-manager-body">
+          <div class="prompt-manager-sidebar">
+            <div class="prompt-version-list" id="promptVersionList"></div>
+            <button id="newPromptVersionBtn" class="secondary-button" type="button" style="width: 100%; margin-top: 8px;">+ 新建版本</button>
+          </div>
+          <div class="prompt-manager-editor" id="promptManagerEditor">
+            <p class="muted" style="text-align: center; margin-top: 80px;">← 选择左侧版本进行编辑，或新建版本</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
 
     <script src="/shared.js"></script>
     <script src="/analysis.js"></script>

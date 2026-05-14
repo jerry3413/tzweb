@@ -226,8 +226,8 @@ async function route(req, res) {
 
   // ===== 评论解析接口 =====
 
-  // 列出所有分析任务（只返回元数据，不包含完整分类结果）。
-  // Prompt 版本列表
+  // ===== Prompt 版本管理 =====
+  // 列出所有版本（不含 promptTemplate 正文）
   if (url.pathname === '/api/prompts/versions' && req.method === 'GET') {
     try {
       const versions = getPromptVersionsList();
@@ -238,18 +238,73 @@ async function route(req, res) {
     return;
   }
 
-  // 指定 Prompt 版本的完整内容（含 ${dimensionsDesc} 占位符）
-  const promptVersionMatch = url.pathname.match(/^\/api\/prompts\/versions\/([^/]+)$/);
-  if (promptVersionMatch && req.method === 'GET') {
+  // 新建版本
+  if (url.pathname === '/api/prompts/versions' && req.method === 'POST') {
     try {
-      const version = getPromptVersion(promptVersionMatch[1]);
-      if (!version) {
-        sendJson(res, 404, { error: 'Prompt 版本不存在。' });
+      const body = await readJson(req);
+      if (!body.version || !body.promptTemplate) {
+        sendJson(res, 400, { error: '版本号和 promptTemplate 为必填项。' });
         return;
       }
-      sendJson(res, 200, { version });
+      const version = createPromptVersion(body);
+      sendJson(res, 201, { version });
     } catch (error) {
-      sendJson(res, 500, { error: error.message });
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  // 单版本操作：GET / PUT / DELETE / set-current
+  const promptVersionMatch = url.pathname.match(/^\/api\/prompts\/versions\/([^/]+)$/);
+  if (promptVersionMatch) {
+    const versionId = promptVersionMatch[1];
+
+    if (req.method === 'GET') {
+      try {
+        const version = getPromptVersion(versionId);
+        if (!version) {
+          sendJson(res, 404, { error: 'Prompt 版本不存在。' });
+          return;
+        }
+        sendJson(res, 200, { version });
+      } catch (error) {
+        sendJson(res, 500, { error: error.message });
+      }
+      return;
+    }
+
+    if (req.method === 'PUT') {
+      try {
+        const body = await readJson(req);
+        const version = updatePromptVersion(versionId, body);
+        sendJson(res, 200, { version });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      try {
+        deletePromptVersion(versionId);
+        sendJson(res, 200, { ok: true });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    return;
+  }
+
+  // 设为默认版本
+  const setCurrentMatch = url.pathname.match(/^\/api\/prompts\/versions\/([^/]+)\/set-current$/);
+  if (setCurrentMatch && req.method === 'PUT') {
+    try {
+      setCurrentPromptVersion(setCurrentMatch[1]);
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
     }
     return;
   }
@@ -752,6 +807,62 @@ function getPromptVersion(version) {
   }
 }
 
+function savePromptVersions(versions) {
+  writeFileSync(PROMPT_VERSIONS_FILE, JSON.stringify(versions, null, 2) + '\n');
+}
+
+function createPromptVersion(body) {
+  const { version, description, promptTemplate } = body;
+  if (!version || !promptTemplate) throw new Error('版本号和 promptTemplate 为必填项。');
+
+  const versions = JSON.parse(readFileSync(PROMPT_VERSIONS_FILE, 'utf8'));
+  if (versions.find((v) => v.version === version)) {
+    throw new Error(`版本 ${version} 已存在。`);
+  }
+
+  const entry = {
+    version,
+    createdAt: new Date().toISOString(),
+    description: description || '',
+    promptTemplate
+  };
+  versions.push(entry);
+  savePromptVersions(versions);
+  return { version: entry.version, createdAt: entry.createdAt, description: entry.description };
+}
+
+function updatePromptVersion(versionId, body) {
+  const versions = JSON.parse(readFileSync(PROMPT_VERSIONS_FILE, 'utf8'));
+  const v = versions.find((v) => v.version === versionId);
+  if (!v) throw new Error(`版本 ${versionId} 不存在。`);
+
+  if (body.description !== undefined) v.description = body.description;
+  if (body.promptTemplate !== undefined) v.promptTemplate = body.promptTemplate;
+  savePromptVersions(versions);
+  return { version: v.version, createdAt: v.createdAt, description: v.description, current: v.current };
+}
+
+function deletePromptVersion(versionId) {
+  const versions = JSON.parse(readFileSync(PROMPT_VERSIONS_FILE, 'utf8'));
+  const v = versions.find((v) => v.version === versionId);
+  if (!v) throw new Error(`版本 ${versionId} 不存在。`);
+  if (v.current) throw new Error('不能删除当前默认版本，请先设置其他版本为默认。');
+
+  const filtered = versions.filter((v) => v.version !== versionId);
+  savePromptVersions(filtered);
+}
+
+function setCurrentPromptVersion(versionId) {
+  const versions = JSON.parse(readFileSync(PROMPT_VERSIONS_FILE, 'utf8'));
+  const v = versions.find((v) => v.version === versionId);
+  if (!v) throw new Error(`版本 ${versionId} 不存在。`);
+
+  for (const item of versions) {
+    item.current = item.version === versionId;
+  }
+  savePromptVersions(versions);
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -949,7 +1060,7 @@ async function runAnalysisJob(analysis, template, csvFilePaths) {
 
 // 人工重新分配低置信度评论：更新 results 文件中的分类信息。
 async function reassignLowConfidence(analysisId, reviewId, body) {
-  const { dimensionId, tagId, dimensionName, tagName } = body;
+  const { dimensionId, tagId, dimensionName, tagName, polarity } = body;
   if (!dimensionId || !tagId) throw new Error('请同时提供 dimensionId 和 tagId。');
 
   const results = await analysisStore.loadResults(analysisId);
@@ -964,6 +1075,7 @@ async function reassignLowConfidence(analysisId, reviewId, body) {
     tagId,
     dimensionName: dimensionName || '',
     tagName: tagName || '',
+    polarity: polarity || '',
     confidence: 1,
     manuallyAssigned: true
   }];
@@ -996,7 +1108,7 @@ async function reassignLowConfidence(analysisId, reviewId, body) {
 
 // 批量标记低置信度评论：将多条评论一次性归类到指定维度/标签。
 async function batchReassignLowConfidence(analysisId, body) {
-  const { reviewIds, dimensionId, tagId, dimensionName, tagName } = body;
+  const { reviewIds, dimensionId, tagId, dimensionName, tagName, polarity } = body;
   if (!reviewIds || !Array.isArray(reviewIds) || reviewIds.length === 0) {
     throw new Error('请提供至少一条评论 ID。');
   }
@@ -1014,6 +1126,7 @@ async function batchReassignLowConfidence(analysisId, body) {
       tagId,
       dimensionName: dimensionName || '',
       tagName: tagName || '',
+      polarity: polarity || '',
       confidence: 1,
       manuallyAssigned: true
     }];
@@ -1098,7 +1211,7 @@ async function batchDeleteReviewTags(analysisId, body) {
 
 // 批量添加标签：向选中评论添加同一标签。
 async function batchAddTagToReviews(analysisId, body) {
-  const { reviewIds, dimensionId, tagName: rawTagName } = body;
+  const { reviewIds, dimensionId, tagName: rawTagName, polarity } = body;
   if (!reviewIds || !Array.isArray(reviewIds) || reviewIds.length === 0) {
     throw new Error('请提供至少一条评论 ID。');
   }
@@ -1152,6 +1265,7 @@ async function batchAddTagToReviews(analysisId, body) {
       dimensionName: dim.name || dimensionId,
       tagId,
       tagName,
+      polarity: polarity || '',
       confidence: 1,
       manuallyAssigned: true
     });
@@ -1442,6 +1556,7 @@ async function updateReviewClassifications(analysisId, reviewId, body) {
     dimensionName: c.dimensionName || '',
     tagId: c.tagId || '',
     tagName: c.tagName || '',
+    polarity: typeof c.polarity === 'string' && ['正向','负向','中性','需求'].includes(c.polarity) ? c.polarity : '',
     confidence: typeof c.confidence === 'number' ? c.confidence : 1,
     note: typeof c.note === 'string' ? c.note : '',
     ...(c.suggested ? { suggested: true } : { manuallyAssigned: true })
@@ -1713,7 +1828,7 @@ async function generatePromptOptimization(analysisId, body) {
 
   // 构建维度/标签参考列表
   const dimensionsList = (template.dimensions || []).map((dim) => {
-    const tags = (dim.tags || []).map((t) => `  - ${t.name}${t.polarity ? ` [${t.polarity}]` : ''}${t.productMeaning ? `：${t.productMeaning}` : ''}`).join('\n');
+    const tags = (dim.tags || []).map((t) => `  - ${t.name}${t.productMeaning ? `：${t.productMeaning}` : ''}`).join('\n');
     return `### ${dim.name}${dim.productMeaning ? `（${dim.productMeaning}）` : ''}\n${tags}`;
   }).join('\n\n');
 

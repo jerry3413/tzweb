@@ -55,7 +55,6 @@ const els = {
   templateName: document.querySelector('#templateName'),
   templateCategory: document.querySelector('#templateCategory'),
   templateDescription: document.querySelector('#templateDescription'),
-  templateMode: document.querySelector('#templateMode'),
   dimensionsEditor: document.querySelector('#dimensionsEditor'),
   createTemplateBtn: document.querySelector('#createTemplateBtn'),
   createTemplateModal: document.querySelector('#createTemplateModal'),
@@ -97,9 +96,14 @@ const els = {
   maxTokensInput: document.querySelector('#maxTokensInput'),
   parallelTasksInput: document.querySelector('#parallelTasksInput'),
   maxReviewsPerBatchInput: document.querySelector('#maxReviewsPerBatchInput'),
-  systemPromptInput: document.querySelector('#systemPromptInput'),
   userPromptInput: document.querySelector('#userPromptInput'),
   promptVersionSelect: document.querySelector('#promptVersionSelect'),
+  managePromptsBtn: document.querySelector('#managePromptsBtn'),
+  promptManagerModal: document.querySelector('#promptManagerModal'),
+  promptManagerCloseBtn: document.querySelector('#promptManagerCloseBtn'),
+  promptVersionList: document.querySelector('#promptVersionList'),
+  promptManagerEditor: document.querySelector('#promptManagerEditor'),
+  newPromptVersionBtn: document.querySelector('#newPromptVersionBtn'),
   startAnalysisBtn: document.querySelector('#startAnalysisBtn'),
   // 自定义上传
   dataSourceTabs: document.querySelector('#dataSourceTabs'),
@@ -343,10 +347,14 @@ function bindEvents() {
     reader.readAsText(file);
   });
 
+  els.managePromptsBtn.addEventListener('click', openPromptManager);
+  els.promptManagerCloseBtn.addEventListener('click', closePromptManager);
+  els.newPromptVersionBtn.addEventListener('click', handleNewPromptVersion);
+  els.promptManagerModal.addEventListener('click', (e) => { if (e.target === els.promptManagerModal) closePromptManager(); });
   els.toggleAdvancedBtn.addEventListener('click', toggleAdvancedSettings);
   els.analysisTemplateSelect.addEventListener('change', updateDefaultPrompts);
   els.providerSelect.addEventListener('change', onProviderChange);
-  els.promptVersionSelect.addEventListener('change', () => applyPromptVersion(els.promptVersionSelect.value));
+
   els.reloadAnalyses.addEventListener('click', loadAnalyses);
   els.backToJobsBtn.addEventListener('click', hideResults);
   els.exportResultsBtn.addEventListener('click', exportResultsCSV);
@@ -643,7 +651,6 @@ async function openTemplateEditor(templateId) {
       name: templateId.name || '',
       category: templateId.category || '',
       description: templateId.description || '',
-      mode: templateId.mode || '',
       isBuiltIn: false,
       dimensions: (templateId.dimensions || []).map((dim, di) => ({
         id: dim.id || `d${di + 1}`,
@@ -652,7 +659,7 @@ async function openTemplateEditor(templateId) {
         tags: (dim.tags || []).map((tag, ti) => ({
           id: tag.id || `d${di + 1}t${ti + 1}`,
           name: tag.name || '',
-          polarity: tag.polarity || '',
+
           productMeaning: tag.productMeaning || ''
         }))
       }))
@@ -685,7 +692,6 @@ async function openTemplateEditor(templateId) {
       name: '',
       category: '',
       description: '',
-      mode: '',
       isBuiltIn: false,
       dimensions: []
     };
@@ -698,7 +704,6 @@ async function openTemplateEditor(templateId) {
   els.templateName.value = state.currentTemplate.name;
   els.templateCategory.value = state.currentTemplate.category || '';
   els.templateDescription.value = state.currentTemplate.description || '';
-  els.templateMode.value = state.currentTemplate.mode || '';
 
   renderDimensionsEditor();
   els.templateEditor.hidden = false;
@@ -720,7 +725,7 @@ async function exportTemplate(templateId) {
         productMeaning: dim.productMeaning || '',
         tags: (dim.tags || []).map((tag) => ({
           name: tag.name || '',
-          polarity: tag.polarity || '中性',
+  
           productMeaning: tag.productMeaning || ''
         }))
       }))
@@ -953,7 +958,7 @@ function exportCurrentTemplate() {
       productMeaning: dim.productMeaning || '',
       tags: (dim.tags || []).map((tag) => ({
         name: tag.name || '',
-        polarity: tag.polarity || '中性',
+
         productMeaning: tag.productMeaning || ''
       }))
     }))
@@ -995,13 +1000,6 @@ function renderDimensionsEditor() {
         ${(dim.tags || []).map((tag, tagIndex) => `
           <div class="tag-row">
             <input class="tag-name-input" value="${escapeAttr(tag.name || '')}" placeholder="标签名称" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" data-field="tagName">
-            <select class="tag-polarity-select" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" data-field="tagPolarity">
-              <option value="">-- 方向 --</option>
-              <option value="正向" ${tag.polarity === '正向' ? 'selected' : ''}>正向</option>
-              <option value="负向" ${tag.polarity === '负向' ? 'selected' : ''}>负向</option>
-              <option value="中性" ${tag.polarity === '中性' ? 'selected' : ''}>中性</option>
-              <option value="需求" ${tag.polarity === '需求' ? 'selected' : ''}>需求</option>
-            </select>
             <input class="tag-meaning-input" value="${escapeAttr(tag.productMeaning || '')}" placeholder="产品含义（可选）" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" data-field="tagMeaning">
             <button class="secondary-button compact-button remove-tag-btn" data-dim-index="${dimIndex}" data-tag-index="${tagIndex}" type="button">×</button>
           </div>
@@ -1067,11 +1065,6 @@ function bindEditorEvents() {
   els.dimensionsEditor.addEventListener('change', (event) => {
     if (!state.currentTemplate) return;
     const select = event.target;
-    if (select.classList.contains('tag-polarity-select')) {
-      const dimIndex = parseInt(select.dataset.dimIndex, 10);
-      const tagIndex = parseInt(select.dataset.tagIndex, 10);
-      state.currentTemplate.dimensions[dimIndex].tags[tagIndex].polarity = select.value;
-    }
   });
 }
 
@@ -1099,7 +1092,6 @@ async function saveTemplate() {
     name,
     category: els.templateCategory.value.trim(),
     description: els.templateDescription.value.trim(),
-    mode: els.templateMode.value || undefined,
     dimensions: state.currentTemplate.dimensions || []
   };
 
@@ -1335,51 +1327,10 @@ function onProviderChange() {
 // 将指定版本的 prompt 模板填入 textarea。
 // dimensionsDesc 从 state._currentDimensionsDesc 读取。
 async function applyPromptVersion(version) {
-  const dimsDesc = state._currentDimensionsDesc;
-  if (!dimsDesc) return;
-
-  // 尝试从服务端获取指定版本的 prompt 模板
-  let promptTemplate = null;
-  if (version) {
-    try {
-      const data = await fetchJson(`/api/prompts/versions/${encodeURIComponent(version)}`);
-      promptTemplate = data.version?.promptTemplate;
-    } catch (err) {
-      console.error('加载 Prompt 版本失败：', err);
-    }
-  }
-
-  if (promptTemplate) {
-    els.systemPromptInput.value = promptTemplate.replace('${dimensionsDesc}', dimsDesc);
-  }
-  // 体征list模式：版本覆盖后补充 3级分类规则
-  if (state._currentTemplateMode === '体征list') {
-    injectLevel3ToPromptUI();
-  }
-  // 没有版本文件或版本不存在时，保持 textarea 原始内容不变
+  // 版本已在 promptVersionSelect 中跟踪，提交分析时直接使用
+  // 不再需要填充 textarea（System Prompt textarea 已移除）
 }
 
-// 体征list模式：向 System Prompt textarea 注入 3级分类规则。
-// 与后端 injectLevel3ToPrompt 保持完全一致。
-function injectLevel3ToPromptUI() {
-  const current = els.systemPromptInput.value;
-  if (current.includes('3级分类')) return;
-  const level3Rules = `
-10. **3级分类（仅体征list模式）**：对每条评论额外输出一个可选的 level3 字段，从以下 5 个固定类别中选择最匹配的一个。评论不明确属于任何类别则设为 null：
-   - **需求/建议**：用户提出对 APP 有帮助的具体改变方向，包括新增、支持、优化、减少、取消、恢复、配置某能力。也包括明确的隐性需求——用户指出某个具体能力缺失、不支持、无法设置、没有某语言/主题/格式/尺寸/导入来源/导出能力。
-   - **吐槽**：用户表达不满、抱怨、负面评价、价格/广告/订阅/体验不爽，但没有提出明确可执行的改变方向。不要把普通负面反馈自动推导成需求/建议。
-   - **bug**：用户描述已有功能异常、失败、报错、崩溃、卡死、结果错误、文件打不开、保存失败、导入失败、转换失败。判断重点：功能本应可用，但没有按预期工作。
-   - **不会操作**：用户不知道怎么用、找不到入口、不理解流程、询问如何操作或误解使用方式。如果评论明确表达某能力不存在或不支持，优先判为需求/建议。
-   - **与程序无关**：评论无法归因到 APP 功能、体验、BUG、需求、广告、订阅、价格、语言、UI 或操作问题。
-
-输出格式中每条评论增加 "level3" 字段：值必须为 "bug"/"需求/建议"/"不会操作"/"与程序无关"/"吐槽" 或 null。
-示例：[{"reviewIndex": 0, "classifications": [...], "suggestions": [...], "level3": "bug"}, {"reviewIndex": 1, "classifications": [], "suggestions": [], "level3": null}]`;
-  if (current.includes('## 输出格式')) {
-    els.systemPromptInput.value = current.replace('## 输出格式', level3Rules + '\n\n## 输出格式');
-  } else {
-    els.systemPromptInput.value = current + '\n' + level3Rules;
-  }
-}
 
 // 根据所选模板生成默认 System Prompt 和 User Prompt 模板，供用户预览和编辑。
 async function updateDefaultPrompts() {
@@ -1402,81 +1353,23 @@ async function updateDefaultPrompts() {
     const validTags = (dim.tags || []).filter((tag) => tag.id && tag.name);
     if (validTags.length === 0) return '';
     const tagsDesc = validTags.map((tag) => {
-      const polarity = tag.polarity ? `[${tag.polarity}] ` : '';
       const meaning = tag.productMeaning ? ` — ${tag.productMeaning}` : '';
-      return `  ${polarity}"${tag.name}"${meaning}`;
+      return `  "${tag.name}"${meaning}`;
     }).join('\n');
     return `- ${dim.name}（${dim.productMeaning || ''}）：\n${tagsDesc}`;
   }).filter(Boolean).join('\n');
 
   // 缓存维度描述和模板模式，供版本切换时复用
   state._currentDimensionsDesc = dimensionsDesc;
-  state._currentTemplateMode = tpl.mode || '';
 
-  // 先用硬编码最新版本作为 fallback，再尝试加载用户选择的版本
-  els.systemPromptInput.value = `你是一个专业的 APP 用户评论分析助手。请根据以下模板维度与标签，对每条评论进行语义理解和分类。
 
-## 分类规则
-1. 一条评论可以同时匹配多个维度和多个标签。只要评论内容涉及该维度/标签，就应该标记。
-2. 对每个匹配输出 confidence（0-1 的小数），表示你对这个分类的确信程度：
-   - 0.9-1.0：评论明确表达了该含义
-   - 0.7-0.9：评论高度暗示该含义
-   - 0.5-0.7：评论可能涉及该含义，但不够明确
-   - 低于 0.5：不要输出，视为不匹配
-3. **无意义内容跳过**：对于无实质内容的评论（纯情绪表达如 "very good"/"good"/"bad"、乱码、纯表情、刷评灌水、与APP无关内容等），不要强行匹配任何维度/标签，直接返回空的 classifications 数组。
-4. 如果评论内容与任何维度/标签都不相关，也返回空的 classifications 数组。
-5. **重要**：只输出 JSON 数组，不要输出其他文字、解释或 markdown 代码块标记。
-6. **note 补充信息**：仅当评论包含标签名未能覆盖的具体细节时才填写 note。note 是评论原文信息的提炼，不是标签名的复述或换说法。
-   **必须填 note**（评论有标签名之外的具体信息）：
-   - 正向标签：用户具体喜欢什么？（如评论"converts 50 pages in 3 seconds" + 标签"转换速度快" → note: "50页3秒转完"）
-   - 负向标签：用户具体抱怨什么？（如评论"full screen ad every time I click convert" + 标签"广告多" → note: "每次点转换都弹全屏广告"）
-   - 需求标签：用户具体建议什么功能？（如评论"need an option to choose output quality" + 标签"增加压缩选项" → note: "希望可选输出图片质量"）
-   - 中性标签：用户的具体场景或动机是什么？（如评论"using this to scan my ID for exam submission" + 标签"办公/学习场景" → note: "扫描证件提交考试"）
-   **禁止填 note**（评论内容已被标签名完全覆盖，无额外信息）：
-   - 评论"too many ads" + 标签"广告多" → note 留空（没说广告在哪、何时弹）
-   - 评论"very good app" + 标签"满意/好评" → note 留空（没说好在哪）
-   - 评论"crashes every time" + 标签"闪退/崩溃" → note 留空（没说触发场景）
-   - 评论"waste of money" + 标签"付费不满" → note 留空（没说哪里不值）
-   - 评论只是换一种说法复述标签名 → note 留空
-   **判断标准**：如果 note 和标签名表达的是同一件事，就留空。只有评论说出了标签名覆盖不了的具体细节时才填。
-
-7. **维度区分指南**：当一条评论可能同时命中"功能完整性"和"功能质量"两个维度时，按以下标准区分：
-   - 功能完整性：关注"功能是否存在、链路是否通畅"（有没有这个能力、能不能走完流程）
-   - 功能质量：关注"功能执行完成后的结果好坏"（输出清不清晰、排版对不对、比例是否正常）
-   例如："cannot convert images to PDF" → 功能完整性（能力缺失，任务无法执行）
-   "converted but PDF is blurry" → 功能质量（任务完成了但结果不满意）
-   "app crashes when I try to save" → 技术稳定性（崩溃），不是功能完整性也不是功能质量
-   "I can't find the file after saving" → UI/交互（找不到保存位置），不是功能质量
-8. **"其他"标签使用规则**：名称为"其他XXX"的标签是兜底选项，仅当评论明确不属于该维度下任何具体标签时才使用。命中"其他"标签时必须：
-   - note 必填，简要说明评论的具体内容
-   - 在 note 末尾附加 [新标签候选: XXX]，建议一个可新增的具体标签名
-   例如：评论"the OCR feature misreads Chinese characters"命中"其他功能质量反馈" → note: "OCR识别中文字符出错 [新标签候选: OCR识别错误]"
-
-## 模板维度与标签
-
-${dimensionsDesc}
-
-## 输出格式
-请严格按以下 JSON 数组格式输出：
-[{"reviewIndex": 0, "classifications": [{"dimension": "维度名称", "tag": "标签名称", "confidence": 0.85, "note": "具体内容（可选）"}]}, {"reviewIndex": 1, "classifications": []}]`;
-
-  // User Prompt 模板：占位符会在服务端替换为实际评论数据
   els.userPromptInput.value = `以下是需要分类的 __BATCH_SIZE__ 条评论（每条包含 index、starRating 和 text）：
 
 __REVIEWS_JSON__
 
 请输出分类结果 JSON 数组：`;
 
-  // 如果用户选择了非最新版本，用对应版本的 prompt 模板覆盖 System Prompt
-  const selectedVersion = els.promptVersionSelect.value;
-  if (selectedVersion) {
-    await applyPromptVersion(selectedVersion);
-  }
 
-  // 体征list模式：注入 3级分类规则（与后端 injectLevel3ToPrompt 保持一致）
-  if (tpl.mode === '体征list') {
-    injectLevel3ToPromptUI();
-  }
 }
 
 // ===== 分析任务创建 =====
@@ -1560,7 +1453,6 @@ async function submitAnalysis() {
       maxReviewsPerBatch: parseInt(els.maxReviewsPerBatchInput.value, 10) || 0,
       temperature: !isNaN(parseFloat(els.temperatureInput.value)) ? parseFloat(els.temperatureInput.value) : undefined,
       maxTokens: parseInt(els.maxTokensInput.value, 10) || 8192,
-      systemPrompt: els.systemPromptInput.value.trim() || undefined,
       userPromptTemplate: els.userPromptInput.value.trim() || undefined,
       promptVersion: els.promptVersionSelect.value || undefined
     };
@@ -1869,10 +1761,7 @@ async function viewResults(analysisId) {
     els.filterPolarity.value = '';
     els.filterHasNote.value = '';
     els.filterPolaritySummary.value = '';
-    const hasLevel3 = state.currentResults?.template?.mode === '体征list';
-    els.filterLevel3.hidden = !hasLevel3;
-    els.filterLevel3Label.hidden = !hasLevel3;
-    if (hasLevel3) els.filterLevel3.value = '';
+    els.filterLevel3.value = '';
     renderFilteredReviews();
     renderLowConfidence();
 
@@ -1922,20 +1811,11 @@ function exportResultsCSV() {
 
   const template = results.template;
   const allDimensions = template?.dimensions || [];
-  const tagMetaMap = new Map();
-  for (const dim of allDimensions) {
-    for (const tag of (dim.tags || [])) {
-      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name, dimName: dim.name });
-    }
-  }
-
-  const getPolarity = (c) => c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+  const getPolarity = (c) => c.polarity || '';
 
   const hasTranslation = results.reviews.some((r) => r.translatedText);
   const headers = ['评论内容', '评分', 'App 版本', '评论者', '评论日期', '维度', '标签', '向性', '置信度', '备注', '用户建议', '人工标注', '低置信度'];
-  if (template?.mode === '体征list') {
-    headers.push('3级分类');
-  }
+  headers.push('3级分类');
   if (hasTranslation) {
     headers.push('翻译');
   }
@@ -1949,7 +1829,7 @@ function exportResultsCSV() {
 
     if (classifications.length === 0) {
       const row = [review.reviewText || '', review.starRating || '', review.appVersion || '', review.reviewerName || '', review.reviewDate || '', '', '', '', '', '', suggestions, '', review.isLowConfidence ? '是' : ''];
-      if (template?.mode === '体征list') row.push(level3Val);
+      row.push(level3Val);
       if (hasTranslation) row.push(translatedVal);
       rows.push(row);
     } else {
@@ -1969,7 +1849,7 @@ function exportResultsCSV() {
           c.manuallyAssigned ? '是' : '',
           review.isLowConfidence ? '是' : ''
         ];
-        if (template?.mode === '体征list') row.push(level3Val);
+        row.push(level3Val);
         if (hasTranslation) row.push(translatedVal);
         rows.push(row);
       }
@@ -2017,14 +1897,7 @@ function renderDimensionStats() {
   const template = state.currentResults?.template;
   const allDimensions = template?.dimensions || [];
 
-  // 构建 tagId → { polarity, tagName } 的索引
-  const tagMetaMap = new Map();
-  for (const dim of allDimensions) {
-    for (const tag of (dim.tags || [])) {
-      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name });
-    }
-  }
-  const getPolarity = (c) => c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+  const getPolarity = (c) => c.polarity || '';
 
   // 向性筛选时，从原始评论实时计算统计；否则使用预计算的 dimensionStats
   let stats;
@@ -2044,9 +1917,25 @@ function renderDimensionStats() {
   els.dimensionStats.innerHTML = stats.map((dim) => {
     const percent = Math.round((dim.count / maxCount) * 100);
     const tagItems = (dim.tags || []).sort((a, b) => b.count - a.count).slice(0, 8).map((tag) => {
-      const pol = tagMetaMap.get(tag.tagId)?.polarity || '';
+      // 统计该标签下各向性的出现次数，取最多的作为代表向性
+      let pol = '';
+      if (tag.tagId) {
+        const polCounts = {};
+        for (const review of (state.currentResults?.reviews || [])) {
+          if (review.isLowConfidence) continue;
+          for (const c of (review.classifications || [])) {
+            if (c.tagId === tag.tagId && c.polarity) {
+              polCounts[c.polarity] = (polCounts[c.polarity] || 0) + 1;
+            }
+          }
+        }
+        let maxCount = 0;
+        for (const [p, n] of Object.entries(polCounts)) {
+          if (n > maxCount) { maxCount = n; pol = p; }
+        }
+      }
       const polClass = pol === '正向' ? 'pol-positive' : pol === '负向' ? 'pol-negative' : pol === '需求' ? 'pol-demand' : 'pol-neutral';
-      return `<span class="tag-badge" data-dim-id="${escapeAttr(dim.dimensionId)}" data-tag-id="${escapeAttr(tag.tagId || '')}" style="cursor: pointer;"><span class="polarity-tag ${polClass}">${escapeHtml(pol)}</span>${escapeHtml(tag.tagName)} (${tag.count})</span>`;
+      return `<span class="tag-badge" data-dim-id="${escapeAttr(dim.dimensionId)}" data-tag-id="${escapeAttr(tag.tagId || '')}" style="cursor: pointer;">${pol ? `<span class="polarity-tag ${polClass}">${escapeHtml(pol)}</span>` : ''}${escapeHtml(tag.tagName)} (${tag.count})</span>`;
     }).join('');
 
     return `
@@ -2114,35 +2003,25 @@ function showPolaritySortModal() {
   const template = state.currentResults?.template;
   const allDimensions = template?.dimensions || [];
 
-  // 构建 tagId → { polarity, tagName, dimName, dimId } 索引
-  const tagMeta = new Map();
-  for (const dim of allDimensions) {
-    for (const tag of (dim.tags || [])) {
-      tagMeta.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name, dimName: dim.name, dimId: dim.id });
-    }
-  }
-
   // polarity → Map<dimId::tagId, { dimId, tagId, dimName, tagName, count }>
-  const groupMaps = { '正向': new Map(), '负向': new Map(), '需求': new Map(), '中性': new Map() };
+  const groupMaps = { '正向': new Map(), '负向': new Map(), '需求': new Map(), '中性': new Map(), '未标记': new Map() };
 
   for (const review of reviews) {
     if (review.isLowConfidence) continue;
     for (const c of (review.classifications || [])) {
-      const meta = tagMeta.get(c.tagId);
-      if (!meta) continue;
-      const polarity = c.polarity || meta.polarity || '中性';
+      const polarity = c.polarity || '未标记';
       const gm = groupMaps[polarity] || (groupMaps[polarity] = new Map());
-      const key = `${meta.dimId}::${c.tagId}`;
+      const key = `${c.dimensionId}::${c.tagId}`;
       const entry = gm.get(key);
       if (entry) {
         entry.count += 1;
       } else {
-        gm.set(key, { dimId: meta.dimId, tagId: c.tagId, dimName: meta.dimName, tagName: meta.tagName, count: 1 });
+        gm.set(key, { dimId: c.dimensionId, tagId: c.tagId, dimName: c.dimensionName, tagName: c.tagName, count: 1 });
       }
     }
   }
 
-  const order = ['负向', '正向', '需求', '中性'];
+  const order = ['未标记', '负向', '正向', '需求', '中性'];
   let html = '';
 
   for (const pol of order) {
@@ -2395,15 +2274,8 @@ function renderFilteredReviews() {
   // 构建 tagId → { polarity, tagName } 的索引，用于向性筛选和显示
   const template = state.currentResults?.template;
   const allDimensions = template?.dimensions || [];
-  const tagMetaMap = new Map();
-  for (const dim of allDimensions) {
-    for (const tag of (dim.tags || [])) {
-      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name });
-    }
-  }
-
-  // 获取分类的实际向性（优先人工标注，其次模板定义）
-  const getPolarity = (c) => c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+  // 获取分类的实际向性
+  const getPolarity = (c) => c.polarity || '';
 
   let filtered = reviews.filter((r) => !r.isLowConfidence && r.classifications && r.classifications.length > 0);
 
@@ -2438,7 +2310,7 @@ function renderFilteredReviews() {
     filtered = filtered.filter((r) => (r.classifications || []).some((c) => c.note && c.note.trim()));
   }
 
-  // 3级分类筛选（体征list 模式）
+  // 3级分类筛选
   if (!els.filterLevel3.hidden && els.filterLevel3.value) {
     const l3v = els.filterLevel3.value;
     filtered = l3v === 'null'
@@ -2465,10 +2337,7 @@ function renderFilteredReviews() {
   }
 
   const editMode = state.editMode;
-  const hasLevel3 = state.currentResults?.template?.mode === '体征list';
-  // 同步 DOM 状态（可能被 refreshResultsFromServer 覆盖）
-  els.filterLevel3.hidden = !hasLevel3;
-  els.filterLevel3Label.hidden = !hasLevel3;
+
 
   els.classifiedTable.innerHTML = filtered.map((r) => {
     const isAdding = state._addingTagForReviewId === r.reviewId;
@@ -2486,11 +2355,11 @@ function renderFilteredReviews() {
       <td>${'★'.repeat(Math.min(5, r.starRating || 0))}${r.starRating ? ` ${r.starRating}` : ''}</td>
       <td class="muted" style="font-size: 12px;">${escapeHtml(r.appVersion || '-')}</td>
       <td>
-        ${hasLevel3 && r.level3 ? `<span class="level3-badge l3-${r.level3 === 'bug' ? 'bug' : r.level3 === '需求/建议' ? 'suggestion' : r.level3 === '不会操作' ? 'operation' : r.level3 === '吐槽' ? 'rant' : 'unrelated'}">${escapeHtml(r.level3)}</span>` : ''}
+        ${r.level3 ? `<span class="level3-badge l3-${r.level3 === 'bug' ? 'bug' : r.level3 === '需求/建议' ? 'suggestion' : r.level3 === '不会操作' ? 'operation' : r.level3 === '吐槽' ? 'rant' : 'unrelated'}">${escapeHtml(r.level3)}</span>` : ''}
         <div class="tag-badges">
           ${(r.classifications || []).map((c) => {
             const isMatch = filterTagRaw && c.dimensionId === filterTagDimId && (c.tagId === filterTagId || c.tagName === filterTagId);
-            const polarity = c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+            const polarity = c.polarity || '';
             const polClass = polarity === '正向' ? 'pol-positive' : polarity === '负向' ? 'pol-negative' : polarity === '需求' ? 'pol-demand' : 'pol-neutral';
             return `<span class="tag-badge${isMatch ? ' tag-badge--match' : ''}" title="${escapeAttr(c.note || '')}">
               <span class="polarity-tag ${polClass}">${escapeHtml(polarity)}</span>
@@ -3156,7 +3025,6 @@ async function executeBatchDelete(reviewIds, context, selectedTags) {
 function showReclassifyModal(review, aiResult) {
   const classifications = aiResult.classifications || [];
   const level3 = aiResult.level3 || null;
-  const hasLevel3 = state.currentResults?.template?.mode === '体征list';
   const allDimensions = state.currentResults?.template?.dimensions || [];
 
   els.reclassifyReviewText.innerHTML = `<strong>评论原文：</strong><br>${escapeHtml(review.reviewText || '')}${review.translatedText ? `<br><span class="muted">🌐 ${escapeHtml(review.translatedText)}</span>` : ''}`;
@@ -3208,6 +3076,7 @@ function showReclassifyModal(review, aiResult) {
             dimensionName: c.dimensionName,
             tagId: tagId,
             tagName: c.tagName,
+  
             confidence: c.confidence || 0.5,
             manuallyAssigned: true,
             suggested: c.suggested || undefined
@@ -3294,7 +3163,6 @@ async function batchReclassify() {
 function showBatchReclassifyModal(reviewIds, aiResults) {
   const reviews = state.currentResults?.reviews || [];
   const allDimensions = state.currentResults?.template?.dimensions || [];
-  const hasLevel3 = state.currentResults?.template?.mode === '体征list';
   const resultMap = new Map();
   for (const r of aiResults) {
     resultMap.set(r.reviewId, r);
@@ -3398,6 +3266,7 @@ function showBatchReclassifyModal(reviewIds, aiResults) {
             dimensionName: c.dimensionName,
             tagId: tagId,
             tagName: c.tagName,
+  
             confidence: c.confidence || 0.5,
             manuallyAssigned: true,
             suggested: c.suggested || undefined
@@ -3485,6 +3354,7 @@ function showBatchAddForm(context) {
       ${allDimensions.map((d) => `<option value="${escapeAttr(d.id)}">${escapeHtml(d.name)}</option>`).join('')}
     </select>
     <input id="batchAddTagInput" list="batch-add-tag-datalist" placeholder="搜索或输入标签" style="height: 30px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; width: 180px;">
+    <select id="batchAddPolaritySelect" style="height: 30px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; width: 80px;"><option value="">向性</option><option value="正向">正向</option><option value="负向">负向</option><option value="中性">中性</option><option value="需求">需求</option></select>
     <button id="batchAddConfirmBtn" class="primary-button compact-button" type="button" style="font-size: 12px; padding: 5px 14px;">确认添加</button>
     <button id="batchAddCancelBtn" class="secondary-button compact-button" type="button" style="font-size: 12px; background: transparent; border-color: var(--line);">取消</button>
   `;
@@ -3527,7 +3397,7 @@ function showBatchAddForm(context) {
       const data = await fetchJson(`/api/analysis/${encodeURIComponent(state.currentResults.id)}/reviews/batch-add-tag`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ reviewIds: ids, dimensionId: dimId, tagName })
+        body: JSON.stringify({ reviewIds: ids, dimensionId: dimId, tagName, polarity: els.batchAddPolaritySelect?.value || '' })
       });
 
       // 更新本地状态
@@ -3544,6 +3414,7 @@ function showBatchAddForm(context) {
               dimensionName: data.dimensionName || '',
               tagId: data.tagId,
               tagName: data.tagName,
+              polarity: els.batchAddPolaritySelect?.value || '',
               confidence: 1,
               manuallyAssigned: true
             });
@@ -3612,14 +3483,6 @@ function renderLowConfidence() {
   const template = state.currentResults?.template;
   const allDimensions = template?.dimensions || [];
 
-  // 构建 tagId → { polarity, tagName } 的索引
-  const tagMetaMap = new Map();
-  for (const dim of allDimensions) {
-    for (const tag of (dim.tags || [])) {
-      tagMetaMap.set(tag.id, { polarity: tag.polarity || '', tagName: tag.name });
-    }
-  }
-
   // 构建共享 datalist（避免 741行 × 259标签 = 19万 DOM 元素导致崩溃）
   const sharedDatalistOptions = allDimensions.flatMap((dim) =>
     (dim.tags || []).map((tag) => `<option value="${escapeAttr(tag.name)}">${escapeHtml(dim.name)}</option>`)
@@ -3653,13 +3516,13 @@ function renderLowConfidence() {
         <div class="tag-badges">
           ${regularClasses.length > 0
             ? regularClasses.map((c) => {
-                const polarity = c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+                const polarity = c.polarity || '';
                 const polClass = polarity === '正向' ? 'pol-positive' : polarity === '负向' ? 'pol-negative' : polarity === '需求' ? 'pol-demand' : 'pol-neutral';
                 return `<span class="tag-badge" title="${escapeAttr(c.note || '')}"><span class="polarity-tag ${polClass}">${escapeHtml(polarity)}</span>${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)} (${Math.round(c.confidence * 100)}%)<button class="tag-delete-btn" type="button" data-review-id="${escapeAttr(r.reviewId)}" data-dim-id="${escapeAttr(c.dimensionId)}" data-tag-id="${escapeAttr(c.tagId || c.tagName)}" title="删除标签" style="margin-left: 4px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px;">✕</button></span>`;
               }).join('')
             : (suggestedClasses.length === 0 ? '<span class="muted">AI 未能匹配</span>' : '')}
           ${suggestedClasses.map((c) => {
-            const polarity = c.polarity || tagMetaMap.get(c.tagId)?.polarity || '';
+            const polarity = c.polarity || '';
             const polClass = polarity === '正向' ? 'pol-positive' : polarity === '负向' ? 'pol-negative' : polarity === '需求' ? 'pol-demand' : 'pol-neutral';
             return `<span class="tag-badge tag-badge--suggested" title="${escapeAttr(c.note || '')}"><span class="polarity-tag ${polClass}">${escapeHtml(polarity)}</span>AI 建议: ${escapeHtml(c.dimensionName)} · ${escapeHtml(c.tagName)} (${Math.round(c.confidence * 100)}%)</span>`;
           }).join('')}
@@ -3694,6 +3557,7 @@ function renderLowConfidence() {
           ${allDimensions.map((dim) => `<option value="${escapeAttr(dim.id)}">${escapeHtml(dim.name)}</option>`).join('')}
         </select>
         <input class="reassign-tag-input" data-review-id="${escapeAttr(r.reviewId)}" list="shared-reassign-datalist" placeholder="搜索或输入新标签" style="height: 28px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; background: var(--paper); margin-bottom: 4px; width: 150px;">
+        <select class="reassign-polarity-select" data-review-id="${escapeAttr(r.reviewId)}" style="height: 28px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 0 2px; background: var(--paper); margin-bottom: 4px; width: 70px;"><option value="">向性</option><option value="正向">正向</option><option value="负向">负向</option><option value="中性">中性</option><option value="需求">需求</option></select>
         <button class="secondary-button compact-button reassign-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button">添加标签</button>
         <button class="secondary-button compact-button reclassify-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button" style="background: var(--accent); color: #fff; border-color: var(--accent);">AI重分类</button>
         <button class="secondary-button compact-button meaningless-btn" data-review-id="${escapeAttr(r.reviewId)}" type="button" style="background: var(--muted); color: #fff; border-color: var(--muted);">标记无意义</button>
@@ -3706,6 +3570,7 @@ function renderLowConfidence() {
     dimSelect.addEventListener('change', () => {
       const reviewId = dimSelect.dataset.reviewId;
       const tagInput = els.lowConfidenceTable.querySelector(`.reassign-tag-input[data-review-id="${reviewId}"]`);
+          const polaritySelect = els.lowConfidenceTable.querySelector(`.reassign-polarity-select[data-review-id="${reviewId}"]`);
       if (tagInput) {
         const dimId = dimSelect.value;
         tagInput.setAttribute('list', dimId ? `reassign-datalist-${dimId}` : 'shared-reassign-datalist');
@@ -3779,6 +3644,7 @@ function renderLowConfidence() {
         dimensionName: dim?.name || '',
         tagId: tagId,
         tagName: tagName,
+        polarity: polaritySelect?.value || '',
         confidence: 1,
         manuallyAssigned: true
       }];
@@ -3787,7 +3653,7 @@ function renderLowConfidence() {
         await saveReviewClassifications(reviewId, newClasses);
 
         recordEditHistory(review, originalClasses, newClasses, 'tag_added');
-        addRecentTag(dimId, dim?.name || '', tagName, tag?.polarity || '');
+        addRecentTag(dimId, dim?.name || '', tagName, polaritySelect?.value || '');
         review.classifications = newClasses;
 
         // 如果还有 AI 建议标签未处理，继续保留在待确认列表
@@ -3852,7 +3718,7 @@ function renderLowConfidence() {
         const review = state.currentResults.reviews.find((r) => r.reviewId === reviewId);
         if (review) {
           review.isLowConfidence = false;
-          review.classifications = [{ dimensionId: '_meaningless', tagId: '_meaningless', dimensionName: '无意义', tagName: '无意义', confidence: 1, manuallyAssigned: true }];
+          review.classifications = [{ dimensionId: '_meaningless', tagId: '_meaningless', dimensionName: '无意义', tagName: '无意义', polarity: '中性', confidence: 1, manuallyAssigned: true }];
         }
         if (state.currentResults.summary) {
           state.currentResults.summary.lowConfidenceCount = Math.max(0, (state.currentResults.summary.lowConfidenceCount || 1) - 1);
@@ -4043,3 +3909,186 @@ function analysisStepText(step) {
   };
   return map[step] || step || '';
 }
+
+// ===== Prompt 版本管理弹窗 =====
+
+function showToast(message, type) {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type || 'success'}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast--visible'));
+  setTimeout(() => {
+    toast.classList.remove('toast--visible');
+    setTimeout(() => toast.remove(), 300);
+  }, 2000);
+}
+
+async function openPromptManager() {
+  els.promptManagerModal.hidden = false;
+  els.promptManagerEditor.innerHTML = '<p class="muted" style="text-align: center; margin-top: 80px;">加载中...</p>';
+  await refreshPromptVersionList();
+}
+
+function closePromptManager() {
+  els.promptManagerModal.hidden = true;
+}
+
+async function refreshPromptVersionList(activeVersion) {
+  try {
+    const data = await fetchJson('/api/prompts/versions');
+    const versions = data.versions || [];
+    if (!activeVersion && versions.length > 0) {
+      const cur = versions.find((v) => v.current) || versions[0];
+      activeVersion = cur.version;
+    }
+    els.promptVersionList.innerHTML = versions.map((v) =>
+      `<div class="version-item${v.version === activeVersion ? ' active' : ''}" data-version="${escapeAttr(v.version)}">
+        <span>v${escapeHtml(v.version)}${v.current ? '<span class="version-badge">默认</span>' : ''}</span>
+      </div>`
+    ).join('') || '<p class="muted" style="padding: 8px;">暂无版本</p>';
+
+    // 绑定点击事件
+    els.promptVersionList.querySelectorAll('.version-item').forEach((el) => {
+      el.addEventListener('click', () => editPromptVersion(el.dataset.version));
+    });
+
+    // 自动加载当前选中版本到编辑器
+    if (activeVersion) {
+      await editPromptVersion(activeVersion, true);
+    }
+  } catch (err) {
+    els.promptVersionList.innerHTML = '<p class="muted" style="padding: 8px; color: var(--red);">加载失败</p>';
+  }
+}
+
+async function editPromptVersion(version, skipRefresh) {
+  try {
+    // 先刷新 sidebar 高亮状态（用户点击时），自动加载时跳过避免循环
+    if (!skipRefresh) await refreshPromptVersionList(version);
+
+    const data = await fetchJson(`/api/prompts/versions/${encodeURIComponent(version)}`);
+    const v = data.version;
+    if (!v) { showToast('版本不存在。', 'error'); return; }
+
+    els.promptManagerEditor.innerHTML = `
+      <div class="field full">
+        <span>版本号</span>
+        <input id="editVersionId" type="text" value="${escapeAttr(v.version)}" readonly style="background: var(--bg);">
+      </div>
+      <div class="field full">
+        <span>描述</span>
+        <input id="editVersionDesc" type="text" value="${escapeAttr(v.description || '')}" placeholder="简要描述此版本的改动">
+      </div>
+      <div class="field full">
+        <span>Prompt 模板 <span class="fine-print">（\${dimensionsDesc} 会在运行时替换为模板维度标签）</span></span>
+        <textarea id="editVersionTemplate" rows="16" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;">${escapeHtml(v.promptTemplate || '')}</textarea>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+        <button id="saveVersionBtn" class="secondary-button" type="button" style="font-size: 13px; height: 36px; margin-top: 0;">保存</button>
+        ${v.current ? '' : '<button id="setCurrentVersionBtn" class="secondary-button" type="button" style="font-size: 13px; height: 36px; margin-top: 0;">设为默认</button>'}
+        ${v.current ? '' : '<button id="deleteVersionBtn" class="secondary-button" type="button" style="font-size: 13px; height: 36px; margin-top: 0; margin-left: auto; background: var(--red); color: #fff; border-color: var(--red);">删除</button>'}
+        ${v.current ? '<span class="muted" style="font-size: 12px; margin-left: auto;">当前默认版本，不可删除</span>' : ''}
+      </div>`;
+
+    document.getElementById('saveVersionBtn').addEventListener('click', () => handleSavePromptVersion(false, version));
+    if (!v.current) {
+      document.getElementById('setCurrentVersionBtn').addEventListener('click', () => handleSetCurrentVersion(version));
+      document.getElementById('deleteVersionBtn').addEventListener('click', () => handleDeletePromptVersion(version));
+    }
+  } catch (err) {
+    showToast('加载版本失败：' + err.message, 'error');
+  }
+}
+
+async function handleNewPromptVersion() {
+  // 获取最近一个版本的 prompt 模板作为默认值
+  let defaultTemplate = '';
+  try {
+    const data = await fetchJson('/api/prompts/versions');
+    const versions = data.versions || [];
+    if (versions.length > 0) {
+      const latest = versions.find((v) => v.current) || versions[0];
+      const vData = await fetchJson(`/api/prompts/versions/${encodeURIComponent(latest.version)}`);
+      defaultTemplate = vData.version?.promptTemplate || '';
+    }
+  } catch { /* 获取失败就用空模板 */ }
+
+  els.promptManagerEditor.innerHTML = `
+    <div class="field full">
+      <span>版本号 <span class="fine-print">（如 2.1、3.0）</span></span>
+      <input id="editVersionId" type="text" placeholder="输入版本号">
+    </div>
+    <div class="field full">
+      <span>描述</span>
+      <input id="editVersionDesc" type="text" placeholder="简要描述此版本的改动">
+    </div>
+    <div class="field full">
+      <span>Prompt 模板 <span class="fine-print">（\${dimensionsDesc} 会在运行时替换）</span></span>
+      <textarea id="editVersionTemplate" rows="16" style="width: 100%; border: 1px solid var(--line-dark); border-radius: 8px; padding: 10px; font-size: 13px; font-family: monospace; resize: vertical;">${escapeHtml(defaultTemplate)}</textarea>
+    </div>
+    <div style="display: flex; gap: 8px; margin-top: 12px;">
+      <button id="saveVersionBtn" class="secondary-button" type="button" style="font-size: 13px; height: 36px; margin-top: 0;">创建版本</button>
+    </div>`;
+
+  document.getElementById('saveVersionBtn').addEventListener('click', () => handleSavePromptVersion(true));
+}
+
+async function handleSavePromptVersion(isNew, originalVersion) {
+  const versionId = document.getElementById('editVersionId').value.trim();
+  const description = document.getElementById('editVersionDesc').value.trim();
+  const promptTemplate = document.getElementById('editVersionTemplate').value;
+
+  if (!versionId) { window.alert('请输入版本号。'); return; }
+  if (!promptTemplate) { window.alert('Prompt 模板不能为空。'); return; }
+  if (!promptTemplate.includes('${dimensionsDesc}')) {
+    if (!window.confirm('Prompt 模板中未包含 ${dimensionsDesc} 占位符。没有它，不同模板的维度标签将无法替换。确定继续？')) return;
+  }
+
+  try {
+    if (isNew) {
+      await fetchJson('/api/prompts/versions', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version: versionId, description, promptTemplate })
+      });
+    } else {
+      await fetchJson(`/api/prompts/versions/${encodeURIComponent(originalVersion)}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description, promptTemplate })
+      });
+    }
+    await refreshPromptVersionList(isNew ? versionId : originalVersion);
+    if (isNew) {
+      editPromptVersion(versionId, true);
+    }
+    await loadPromptVersions(); // 刷新分析面板的版本下拉框
+    showToast(isNew ? `版本 ${versionId} 已创建` : `版本 ${originalVersion} 已保存`);
+  } catch (err) {
+    showToast('保存失败：' + err.message, 'error');
+  }
+}
+
+async function handleDeletePromptVersion(version) {
+  if (!window.confirm(`确定要删除版本 ${version}？此操作不可撤销。`)) return;
+  try {
+    await fetchJson(`/api/prompts/versions/${encodeURIComponent(version)}`, { method: 'DELETE' });
+    await refreshPromptVersionList();
+    await loadPromptVersions();
+    els.promptManagerEditor.innerHTML = '<p class="muted" style="text-align: center; margin-top: 80px;">← 选择左侧版本进行编辑，或新建版本</p>';
+    showToast(`版本 ${version} 已删除`);
+  } catch (err) {
+    showToast('删除失败：' + err.message, 'error');
+  }
+}
+
+async function handleSetCurrentVersion(version) {
+  try {
+    await fetchJson(`/api/prompts/versions/${encodeURIComponent(version)}/set-current`, { method: 'PUT' });
+    await refreshPromptVersionList(version);
+    await loadPromptVersions();
+    showToast(`v${version} 已设为默认版本`);
+  } catch (err) {
+    showToast('设置默认失败：' + err.message, 'error');
+  }
+}
+

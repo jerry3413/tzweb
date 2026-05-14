@@ -44,13 +44,12 @@ export async function buildCompareV2Report({ analysisIds, analysisStore, downloa
     const reviews = result.reviews || [];
     const dims = (result.template?.dimensions || []);
 
-    // 构建 tagId → { name, polarity, dimName, dimId } 的索引
+    // 构建 tagId → { name, dimName, dimId } 的索引
     const tagMeta = new Map();
     for (const dim of dims) {
       for (const tag of (dim.tags || [])) {
         tagMeta.set(tag.id, {
           tagName: tag.name,
-          polarity: tag.polarity || '中性',
           dimName: dim.name,
           dimId: dim.id,
           productMeaning: dim.productMeaning || ''
@@ -75,11 +74,12 @@ export async function buildCompareV2Report({ analysisIds, analysisStore, downloa
         const meta = tagMeta.get(c.tagId);
         if (!meta) continue;
 
-        if (meta.polarity === '正向') {
+        const pol = c.polarity || '中性';
+        if (pol === '正向') {
           aggregateToMap(likesMap, meta.tagName, meta.dimName, c.note);
-        } else if (meta.polarity === '负向') {
+        } else if (pol === '负向') {
           aggregateToMap(complaintsMap, meta.tagName, meta.dimName, c.note);
-        } else if (meta.polarity === '中性') {
+        } else {
           aggregateToMap(usageMap, meta.tagName, meta.dimName, null);
         }
       }
@@ -387,7 +387,7 @@ async function generateInsights(apps, template, apiKey, providerId, model) {
   const systemPrompt = '你是资深产品分析师，擅长从用户评论分类数据中提炼产品洞察。请只输出 JSON，不要其他文字。';
 
   const dimsDesc = (template.dimensions || []).map((dim) => {
-    const tagsList = (dim.tags || []).map((t) => `${t.name}[${t.polarity || '中性'}]`).join('、');
+    const tagsList = (dim.tags || []).map((t) => t.name).join('、');
     return `  - ${dim.name}（${dim.productMeaning || ''}）：${tagsList}`;
   }).join('\n');
 
