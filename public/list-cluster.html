@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>list聚类统计 — APP 体征后台</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .list-cluster-main {
+      min-width: 0;
+      padding: 34px;
+    }
+    .list-cluster-sticky {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--paper);
+      padding-bottom: 0;
+    }
+    .list-cluster-body {
+      padding-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">评</div>
+        <div>
+          <div class="brand-name">APP 体征后台</div>
+          <div class="brand-subtitle">评论数据采集与解析</div>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="主导航">
+        <a class="nav-item" href="/">
+          <span class="nav-dot"></span>
+          评论下载
+        </a>
+        <span class="nav-item disabled">评论查看</span>
+        <a class="nav-item" href="/analysis.html">
+          <span class="nav-dot"></span>
+          评论解析
+        </a>
+        <a class="nav-item active" href="/list-cluster.html">
+          <span class="nav-dot"></span>
+          list聚类
+        </a>
+        <a class="nav-item" href="/compare.html">
+          <span class="nav-dot"></span>
+          竞品对比
+        </a>
+        <span class="nav-item disabled">预警规则</span>
+      </nav>
+
+      <div class="side-note">
+        <span>当前版本</span>
+        <strong>下载 + AI 解析</strong>
+        <p>基于 AI 语义理解对评论进行多维标签分类，低置信度结果支持人工确认。</p>
+      </div>
+    </aside>
+
+    <main class="list-cluster-main">
+      <div class="list-cluster-sticky">
+        <div class="modal-header">
+          <h3>list聚类统计 <span class="muted" style="font-size:13px;" id="headerTotal"></span></h3>
+        </div>
+        <div class="list-cluster-tabs" id="tabsBar"></div>
+      </div>
+      <div class="list-cluster-body" id="bodyContent"></div>
+    </main>
+  </div>
+
+  <script src="/shared.js"></script>
+  <script>
+    (function () {
+      const POLARITY_LABELS = ['正向', '负向', '中性', '需求'];
+      const POLARITY_CLASS = { '正向': 'pol-positive', '负向': 'pol-negative', '中性': 'pol-neutral', '需求': 'pol-demand' };
+
+      const raw = sessionStorage.getItem('listClusterData');
+      if (!raw) {
+        document.getElementById('bodyContent').innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);">没有数据。请从结果页面打开此页面。</div>';
+        return;
+      }
+
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        document.getElementById('bodyContent').innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);">数据解析失败。</div>';
+        return;
+      }
+
+      const { categoryOrder, totalAll, totalClassified, categories, analysisId, appName } = data;
+
+      document.getElementById('headerTotal').textContent = appName ? `— ${appName} · 共 ${totalAll} 个标签` : `共 ${totalAll} 个标签`;
+
+      // 构建 Tab 栏
+      let tabsHtml = '';
+      for (const cat of categoryOrder) {
+        const entries = categories[cat];
+        if (!entries || entries.length === 0) continue;
+        tabsHtml += `<button class="list-cluster-tab" data-cat="${escapeAttr(cat)}">${escapeHtml(cat)} <strong>${entries.length}</strong></button>`;
+      }
+      document.getElementById('tabsBar').innerHTML = tabsHtml;
+
+      // 构建每个类别的内容
+      let panesHtml = '';
+      for (const cat of categoryOrder) {
+        const entries = categories[cat];
+        if (!entries || entries.length === 0) continue;
+        let rowsHtml = '';
+        for (const e of entries) {
+          const pct = totalClassified > 0 ? (e.count / totalClassified * 100).toFixed(1) : '0.0';
+          let polHtml = '';
+          for (const pl of POLARITY_LABELS) {
+            const pc = e.polarities[pl] || 0;
+            if (pc === 0) continue;
+            polHtml += `<span class="polarity-tag ${POLARITY_CLASS[pl] || ''}" style="font-size:10px;padding:1px 5px;margin:1px;">${pl} ${pc}</span>`;
+          }
+          rowsHtml += `
+            <div class="list-cluster-row" data-key="${escapeAttr(`${e.dimName}·${e.tagName}`)}" data-dim-id="${escapeAttr(e.dimId || '')}" data-tag-id="${escapeAttr(e.tagId || '')}">
+              <div class="list-cluster-row-main">
+                <span class="list-cluster-name">${escapeHtml(e.dimName)} · ${escapeHtml(e.tagName)}</span>
+                <span class="list-cluster-count">${e.count} 条</span>
+                <span class="list-cluster-pct">${pct}%</span>
+                <span class="list-cluster-pol">${polHtml || '<span class="muted">-</span>'}</span>
+                <span class="list-cluster-expand-icon">▸</span>
+              </div>
+              <div class="list-cluster-detail" hidden>
+                ${buildReviewDetailHtml(e._reviews || [], e)}
+              </div>
+            </div>`;
+        }
+        panesHtml += `<div class="list-cluster-pane" data-cat="${escapeAttr(cat)}">${rowsHtml}</div>`;
+      }
+      document.getElementById('bodyContent').innerHTML = panesHtml;
+
+      // 默认选中第一个 Tab
+      const allPanes = document.querySelectorAll('.list-cluster-pane');
+      allPanes.forEach(function (p) { p.style.display = 'none'; });
+      const firstTab = document.querySelector('.list-cluster-tab');
+      if (firstTab) firstTab.classList.add('active');
+      if (allPanes.length > 0) allPanes[0].style.display = '';
+
+      // 测量 sticky header 高度，设置 CSS 变量供展开行使用
+      function updateStickyTop() {
+        var sticky = document.querySelector('.list-cluster-sticky');
+        if (sticky) {
+          document.documentElement.style.setProperty('--sticky-top', sticky.offsetHeight + 'px');
+        }
+        var rowMain = document.querySelector('.list-cluster-row-main');
+        if (rowMain) {
+          document.documentElement.style.setProperty('--sticky-row-height', rowMain.offsetHeight + 'px');
+        }
+      }
+      updateStickyTop();
+      window.addEventListener('resize', updateStickyTop);
+
+      // ESC 关闭
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') window.close();
+      });
+
+      // Tab 切换
+      document.querySelectorAll('.list-cluster-tab').forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          document.querySelectorAll('.list-cluster-tab').forEach(function (t) { t.classList.remove('active'); });
+          tab.classList.add('active');
+          var cat = tab.dataset.cat;
+          document.querySelectorAll('.list-cluster-pane').forEach(function (p) {
+            p.style.display = p.dataset.cat === cat ? '' : 'none';
+          });
+        });
+      });
+
+      // 展开/折叠行
+      document.querySelectorAll('.list-cluster-row-main').forEach(function (row) {
+        row.addEventListener('click', function () {
+          var parent = row.parentElement;
+          var detail = parent.querySelector('.list-cluster-detail');
+          var icon = parent.querySelector('.list-cluster-expand-icon');
+          if (detail.hidden) {
+            detail.hidden = false;
+            parent.classList.add('expanded');
+            icon.textContent = '▾';
+          } else {
+            detail.hidden = true;
+            parent.classList.remove('expanded');
+            icon.textContent = '▸';
+          }
+        });
+      });
+
+      // 点击标签 → 通知主页面跳转
+      document.querySelectorAll('.list-cluster-tag-link').forEach(function (link) {
+        link.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var dimId = link.dataset.dimId;
+          var tagId = link.dataset.tagId;
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({
+              type: 'listClusterNavigate',
+              dimId: dimId,
+              tagId: tagId
+            }, window.location.origin);
+          }
+          window.close();
+        });
+      });
+
+      function buildReviewDetailHtml(reviews, entry) {
+        // 表头
+        var html = '<div class="list-cluster-detail-header">' +
+          '<span class="list-cluster-version">版本</span>' +
+          '<span class="list-cluster-stars">星级</span>' +
+          '<span class="list-cluster-text-trans">译文</span>' +
+          '<span class="list-cluster-l3-col">第三分类</span>' +
+          '<span class="list-cluster-pol-col">向性</span>' +
+          '<span class="list-cluster-note-cell">note</span>' +
+          '<span class="list-cluster-tags">命中的其他标签</span>' +
+          '<span class="list-cluster-text-orig">原文</span>' +
+          '</div>';
+
+        for (var i = 0; i < reviews.length; i++) {
+          var r = reviews[i];
+          var stars = '★'.repeat(r.starRating || 0) + '☆'.repeat(5 - (r.starRating || 0));
+          var text = (r.reviewText || '').length > 150 ? (r.reviewText || '').slice(0, 150) + '...' : (r.reviewText || '');
+          var translated = r.translatedText || '';
+          var version = r.appVersion || '';
+
+          // 分离当前标签（提取向性/note）和其他标签
+          var currentPolarity = '';
+          var currentNote = '';
+          var otherTagsHtml = '';
+          for (var j = 0; j < (r.classifications || []).length; j++) {
+            var c = r.classifications[j];
+            var pol = c.polarity || '中性';
+            var polClass = POLARITY_CLASS[pol] || 'pol-neutral';
+            var isCurrent = c.dimensionName === entry.dimName && c.tagName === entry.tagName;
+            var noteHtml = c.note ? ' <span class="list-cluster-tag-note">' + escapeHtml(c.note) + '</span>' : '';
+            var tagSpan = '<span class="list-cluster-tag-link polarity-tag ' + polClass + '" style="cursor:pointer;margin:1px;" data-dim-id="' + escapeAttr(c.dimensionId || '') + '" data-tag-id="' + escapeAttr(c.tagId || '') + '">' + escapeHtml(c.dimensionName || '') + ' · ' + escapeHtml(c.tagName || '') + noteHtml + '</span>';
+            if (isCurrent) {
+              currentPolarity = pol;
+              currentNote = c.note || '';
+            } else {
+              otherTagsHtml += tagSpan;
+            }
+          }
+
+          var l3Badge = '';
+          if (r.level3) {
+            var l3c = r.level3 === 'bug' ? 'l3-bug' : r.level3 === '需求/建议' ? 'l3-suggestion' : r.level3 === '不会操作' ? 'l3-operation' : r.level3 === '吐槽' ? 'l3-rant' : 'l3-unrelated';
+            l3Badge = '<span class="level3-badge ' + l3c + '">' + escapeHtml(r.level3) + '</span>';
+          }
+
+          html += '<div class="list-cluster-review-item">' +
+            '<span class="list-cluster-version">' + (version ? 'v' + escapeHtml(version) : '<span class="muted">-</span>') + '</span>' +
+            '<span class="list-cluster-stars">' + stars + '</span>' +
+            '<span class="list-cluster-text-trans">' + (translated ? escapeHtml(translated.length > 200 ? translated.slice(0, 200) + '...' : translated) : '<span class="muted">-</span>') + '</span>' +
+            (l3Badge || '<span class="muted">-</span>') +
+            '<span class="polarity-tag ' + (POLARITY_CLASS[currentPolarity] || 'pol-neutral') + '" style="font-size:10px;padding:1px 5px;flex-shrink:0;">' + (currentPolarity || '中性') + '</span>' +
+            '<span class="list-cluster-note-cell">' + (currentNote ? escapeHtml(currentNote) : '<span class="muted">-</span>') + '</span>' +
+            '<span class="list-cluster-tags">' + (otherTagsHtml || '<span class="muted">-</span>') + '</span>' +
+            '<span class="list-cluster-text-orig">' + escapeHtml(text) + '</span>' +
+            '</div>';
+        }
+        if (entry.count > 20) {
+          var filterUrl = '/analysis.html?dimId=' + encodeURIComponent(entry.dimId || '') + '&tagId=' + encodeURIComponent(entry.tagId || '');
+          if (typeof analysisId !== 'undefined' && analysisId) filterUrl += '&analysisId=' + encodeURIComponent(analysisId);
+          html += '<div class="list-cluster-more">' +
+            '<span>还有 ' + (entry.count - 20) + ' 条，</span>' +
+            '<button class="list-cluster-filter-btn" onclick="window.open(&#39;' + filterUrl + '&#39;, &#39;_blank&#39;)">查看全部</button>' +
+            '</div>';
+        }
+        return html;
+      }
+    })();
+  </script>
+</body>
+</html>

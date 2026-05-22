@@ -1,0 +1,125 @@
+{
+  "id": "builtin-image-to-pdf",
+  "name": "工具类模版- image",
+  "category": "工具",
+  "description": "适用于图片转PDF、文档转换类工具APP的评论分类分析，覆盖使用动机、使用场景、功能完整性、功能质量、离线/可用性、广告体验、UI/交互、用户建议、技术稳定性、付费体验等10个维度共49个标签。",
+  "isBuiltIn": true,
+  "createdAt": "2026-05-04T00:00:00.000Z",
+  "updatedAt": "2026-05-06T00:00:00.000Z",
+  "dimensions": [
+    {
+      "id": "dim-pdf-motive",
+      "name": "使用动机",
+      "productMeaning": "用户下载 APP 的核心任务驱动",
+      "tags": [
+        { "id": "tag-pdf-motive-img2pdf", "name": "图片/照片转PDF", "polarity": "中性", "productMeaning": "用户的核心任务是把图片、照片、JPG、PNG 等转换成 PDF。" },
+        { "id": "tag-pdf-motive-submittable", "name": "生成可提交/可分享文件", "polarity": "中性", "productMeaning": "用户希望把图片内容变成更正式、便于提交、上传、发送或打印的 PDF 文件。" },
+        { "id": "tag-pdf-motive-quick", "name": "快速临时处理", "polarity": "中性", "productMeaning": "用户希望快速、省事、临时完成一次 PDF 生成任务。" },
+        { "id": "tag-pdf-motive-free", "name": "免费/低成本替代", "polarity": "中性", "productMeaning": "用户希望用免费或低成本方式完成基础 PDF 处理，不想为简单任务付高价。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-scene",
+      "name": "使用场景",
+      "productMeaning": "决定功能入口、流程长度和广告容忍度",
+      "tags": [
+        { "id": "tag-pdf-scene-study", "name": "学习/作业/考试", "polarity": "中性", "productMeaning": "学生或学习场景中的作业提交、考试材料、学习资料整理。" },
+        { "id": "tag-pdf-scene-work", "name": "工作/办公", "polarity": "中性", "productMeaning": "工作文件、办公资料、业务材料、客户资料等需要转成 PDF。" },
+        { "id": "tag-pdf-scene-cert", "name": "证件/资料提交", "polarity": "中性", "productMeaning": "证件、证书、申请材料、官方资料等需要上传或提交 PDF。" },
+        { "id": "tag-pdf-scene-urgent", "name": "临时急用", "polarity": "中性", "productMeaning": "用户处在赶时间、马上要提交、马上要发送的场景，对流程、广告、付费墙更敏感。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-completeness",
+      "name": "功能完整性",
+      "productMeaning": "核心转换链路是否完整",
+      "tags": [
+        { "id": "tag-pdf-completeness-core-ok", "name": "核心转换能力完整", "polarity": "正向", "productMeaning": "用户认可 APP 能完成图片/照片转 PDF、JPG/PNG 转 PDF、创建 PDF 等核心任务。" },
+        { "id": "tag-pdf-completeness-core-bad", "name": "核心转换能力不足", "polarity": "负向", "productMeaning": "用户认为图片转 PDF、创建 PDF、生成 PDF 等核心任务无法完成或能力不足。" },
+        { "id": "tag-pdf-completeness-import-ok", "name": "导入能力完整", "polarity": "正向", "productMeaning": "用户认可可以顺利从相册、文件、相机或其他来源导入图片/文件。" },
+        { "id": "tag-pdf-completeness-import-bad", "name": "导入能力不足", "polarity": "负向", "productMeaning": "用户抱怨无法导入图片、无法选择文件、来源受限、格式不支持或权限阻断。" },
+        { "id": "tag-pdf-completeness-batch-ok", "name": "批量处理能力完整", "polarity": "正向", "productMeaning": "用户认可可以多选、多图合并、批量处理图片或文件。" },
+        { "id": "tag-pdf-completeness-batch-bad", "name": "批量处理能力不足", "polarity": "负向", "productMeaning": "用户抱怨不能多选、不能批量导入、不能多张图片合成一个 PDF，或批量处理体验缺失。" },
+        { "id": "tag-pdf-completeness-edit-bad", "name": "页面编辑能力不足", "polarity": "负向", "productMeaning": "用户抱怨无法调整顺序、裁剪、旋转、页面、边距、方向或排版。" },
+        { "id": "tag-pdf-completeness-export-ok", "name": "导出分享能力完整", "polarity": "正向", "productMeaning": "用户认可生成后的 PDF 可以保存、下载、导出、分享、上传、发送或打印。" },
+        { "id": "tag-pdf-completeness-export-bad", "name": "导出分享能力不足", "polarity": "负向", "productMeaning": "用户抱怨不能保存、不能下载、不能导出、不能分享、不能上传、不能打印，或生成后拿不到文件。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-quality",
+      "name": "功能质量",
+      "productMeaning": "功能执行完成后，输出结果的质量好坏（非能力有无，非流程是否通畅）",
+      "tags": [
+        { "id": "tag-pdf-quality-blurry", "name": "输出模糊/质量差", "polarity": "负向", "productMeaning": "转换后图片或 PDF 变糊、失真、压缩过度，影响提交、阅读或打印。" },
+        { "id": "tag-pdf-quality-order", "name": "图片顺序错乱", "polarity": "负向", "productMeaning": "多图生成 PDF 时页面顺序不符合用户预期，导致最终文件不可用。" },
+        { "id": "tag-pdf-quality-layout", "name": "页面比例/边距/排版异常", "polarity": "负向", "productMeaning": "转换结果存在页面比例错误、边距异常、图片被裁切、排版混乱等问题。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-offline",
+      "name": "离线/可用性",
+      "productMeaning": "用户能否低门槛完成任务",
+      "tags": [
+        { "id": "tag-pdf-offline-permission", "name": "权限获取异常", "polarity": "负向", "productMeaning": "相册、文件、相机等权限异常，导致无法导入图片、拍照或保存文件。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-ads",
+      "name": "广告体验",
+      "productMeaning": "商业化是否打断核心任务",
+      "tags": [
+        { "id": "tag-pdf-ads-many", "name": "广告多/打断任务", "polarity": "负向", "productMeaning": "广告频繁出现，打断选择、转换、保存、导出等核心任务。" },
+        { "id": "tag-pdf-ads-export", "name": "导出/保存前广告", "polarity": "负向", "productMeaning": "用户在即将完成任务时被广告阻断，容易产生强烈负面情绪。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-ui",
+      "name": "UI/交互",
+      "productMeaning": "信息架构和任务完成效率",
+      "tags": [
+        { "id": "tag-pdf-ui-easy", "name": "简单易用", "polarity": "正向", "productMeaning": "用户认可 APP 操作简单、路径清楚、低学习成本。" },
+        { "id": "tag-pdf-ui-fast", "name": "快速省时", "polarity": "正向", "productMeaning": "用户认可流程短、生成快、少步骤，能快速完成任务。" },
+        { "id": "tag-pdf-ui-complex", "name": "流程复杂/步骤过多", "polarity": "负向", "productMeaning": "用户认为完成图片转 PDF 的步骤太多、流程绕、操作负担重。" },
+        { "id": "tag-pdf-ui-export-entry", "name": "找不到保存/导出入口", "polarity": "负向", "productMeaning": "用户生成后不知道在哪里保存、下载或导出 PDF。" },
+        { "id": "tag-pdf-ui-file-lost", "name": "保存后找不到文件", "polarity": "负向", "productMeaning": "用户可能已成功保存 PDF，但不知道文件在哪里，导致任务实际失败。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-suggestion",
+      "name": "用户建议",
+      "productMeaning": "用户对产品改进的直接或间接诉求",
+      "tags": [
+        { "id": "tag-pdf-suggestion-explicit", "name": "明确功能建议", "polarity": "需求", "productMeaning": "用户明确提出希望新增、优化、支持某个功能，AI 需要额外提取具体建议内容。" },
+        { "id": "tag-pdf-suggestion-implicit", "name": "隐含功能建议", "polarity": "需求", "productMeaning": "用户没有直接说「希望增加」，但通过抱怨表达出功能缺口，AI 可提取隐含改进建议。" },
+        { "id": "tag-pdf-suggestion-ads", "name": "广告体验建议", "polarity": "需求", "productMeaning": "用户明确建议减少广告、降低广告频率、不要在关键流程插入广告。" },
+        { "id": "tag-pdf-suggestion-pay", "name": "付费体验建议", "polarity": "需求", "productMeaning": "用户建议降低价格、开放免费功能、取消强制订阅、改善试用或退款体验。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-stability",
+      "name": "技术稳定性",
+      "productMeaning": "工具型 APP 的基础体验底线",
+      "tags": [
+        { "id": "tag-pdf-stability-crash", "name": "崩溃/闪退", "polarity": "负向", "productMeaning": "APP 在导入、转换、保存、导出等过程中崩溃或闪退。" },
+        { "id": "tag-pdf-stability-lag", "name": "卡顿/加载慢", "polarity": "负向", "productMeaning": "APP 操作卡顿、加载慢、响应慢，影响工具效率。" }
+      ]
+    },
+    {
+      "id": "dim-pdf-pay",
+      "name": "付费体验",
+      "productMeaning": "付费转化、信任感和差评风险",
+      "tags": [
+        { "id": "tag-pdf-pay-paywall", "name": "基础功能付费墙", "polarity": "负向", "productMeaning": "基础图片转 PDF、创建 PDF、保存 PDF 等核心功能被付费墙拦截，是最高优先级商业化痛点。" },
+        { "id": "tag-pdf-pay-forcedtrial", "name": "强制订阅/试用", "polarity": "负向", "productMeaning": "用户反感使用前必须订阅、必须试用或无法跳过付费页。" },
+        { "id": "tag-pdf-pay-boundary", "name": "免费边界不清", "polarity": "负向", "productMeaning": "用户不清楚哪些功能免费、哪些功能收费，下载后才发现核心功能受限。" },
+        { "id": "tag-pdf-pay-opaque", "name": "付费不透明/下载后收费", "polarity": "负向", "productMeaning": "商店页或产品引导让用户以为免费，但实际使用时才要求付款，造成欺骗感。" },
+        { "id": "tag-pdf-pay-expensive", "name": "价格太贵", "polarity": "负向", "productMeaning": "用户认为订阅价格、一次性价格或功能价格过高，不匹配工具价值。" },
+        { "id": "tag-pdf-pay-bindcard", "name": "试用绑卡/付款资料要求", "polarity": "负向", "productMeaning": "试用前要求绑定银行卡、付款资料或支付方式，显著降低信任。" },
+        { "id": "tag-pdf-pay-autocharge", "name": "自动/未授权扣费", "polarity": "负向", "productMeaning": "用户认为出现自动扣费、未经授权扣费、试用结束后突然扣费等问题。" },
+        { "id": "tag-pdf-pay-cancelhard", "name": "取消订阅困难/取消后仍扣费", "polarity": "负向", "productMeaning": "用户找不到取消入口、取消流程困难，或取消后仍继续扣费。" },
+        { "id": "tag-pdf-pay-refund", "name": "退款困难/客服不可达", "polarity": "负向", "productMeaning": "用户退款失败、无法联系支持、客服无回应，导致负面情绪升级。" },
+        { "id": "tag-pdf-pay-scam", "name": "诈骗/误导/信任风险", "polarity": "负向", "productMeaning": "用户使用 scam、fraud、cheat、misleading 等表达，把产品定义为欺骗或诈骗。" }
+      ]
+    }
+  ]
+}

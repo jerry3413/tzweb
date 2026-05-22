@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 // LocalJobStore 是这一版的轻量本地数据库。
@@ -54,6 +54,25 @@ export class LocalJobStore {
     Object.assign(job, patch, { updatedAt: new Date().toISOString() });
     await this.flush();
     return job;
+  }
+
+  async delete(id) {
+    const job = this.get(id);
+    if (!job) return false;
+
+    // 删除关联的下载文件
+    const downloads = job.result?.downloads || [];
+    for (const dl of downloads) {
+      if (dl.path) {
+        try {
+          await rm(dl.path, { force: true });
+        } catch { /* 文件不存在则忽略 */ }
+      }
+    }
+
+    this.jobs = this.jobs.filter((j) => j.id !== id);
+    await this.flush();
+    return true;
   }
 
   // 持久化完整任务列表。
